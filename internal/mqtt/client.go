@@ -23,9 +23,23 @@ type MessageSnapshot struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
+type ReceivedMessage struct {
+	Topic      string
+	Payload    []byte
+	QoS        byte
+	Retained   bool
+	ReceivedAt time.Time
+}
+
+type MessageHandler interface {
+	HandleMessage(ctx context.Context, message ReceivedMessage) error
+}
+
 type Client struct {
-	cfg    config.MQTTConfig
-	logger *slog.Logger
+	cfg     config.MQTTConfig
+	logger  *slog.Logger
+	ctx     context.Context
+	handler MessageHandler
 
 	mu        sync.RWMutex
 	client    mqttlib.Client
@@ -33,10 +47,11 @@ type Client struct {
 	closeOnce sync.Once
 }
 
-func New(cfg config.MQTTConfig, logger *slog.Logger) *Client {
+func New(cfg config.MQTTConfig, logger *slog.Logger, handler MessageHandler) *Client {
 	return &Client{
 		cfg:      cfg,
 		logger:   logger,
+		handler:  handler,
 		messages: make([]MessageSnapshot, 0, 50),
 	}
 }
@@ -46,6 +61,8 @@ func (c *Client) Start(ctx context.Context) error {
 		c.logger.Info("mqtt client disabled")
 		return nil
 	}
+
+	c.ctx = ctx
 
 	options := mqttlib.NewClientOptions()
 	options.AddBroker(c.cfg.Broker)
@@ -186,12 +203,21 @@ func (c *Client) subscribeAll(client mqttlib.Client) error {
 }
 
 func (c *Client) handleMessage(_ mqttlib.Client, message mqttlib.Message) {
+	receivedAt := time.Now().UTC()
+	received := ReceivedMessage{
+		Topic:      message.Topic(),
+		Payload:    append([]byte(nil), message.Payload()...),
+		QoS:        message.Qos(),
+		Retained:   message.Retained(),
+		ReceivedAt: receivedAt,
+	}
+
 	snapshot := MessageSnapshot{
 		Topic:      message.Topic(),
 		Payload:    string(message.Payload()),
 		QoS:        message.Qos(),
 		Retained:   message.Retained(),
-		ReceivedAt: time.Now().UTC(),
+		ReceivedAt: receivedAt,
 	}
 
 	c.appendMessage(snapshot)
@@ -202,6 +228,10 @@ func (c *Client) handleMessage(_ mqttlib.Client, message mqttlib.Message) {
 		"retained", snapshot.Retained,
 		"payload", snapshot.Payload,
 	)
+
+	if c.handler != nil {
+		go c.dispatchMessage(received)
+	}
 }
 
 func (c *Client) appendMessage(message MessageSnapshot) {
@@ -225,4 +255,24 @@ func (c *Client) currentClient() (mqttlib.Client, bool) {
 	}
 
 	return c.client, true
+}
+
+func (c *Client) dispatchMessage(message ReceivedMessage) {
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if c.cfg.OperationTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.cfg.OperationTimeout)
+		defer cancel()
+	}
+
+	if err := c.handler.HandleMessage(ctx, message); err != nil {
+		c.logger.Error("mqtt message processing failed",
+			"topic", message.Topic,
+			"error", err,
+		)
+	}
 }

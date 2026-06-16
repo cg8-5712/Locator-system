@@ -162,7 +162,7 @@ CREATE TABLE users (
 ```sql
 CREATE TABLE devices (
     id BIGSERIAL PRIMARY KEY,
-    imei VARCHAR(32) UNIQUE,
+    device_sn VARCHAR(64) UNIQUE,
     name VARCHAR(64),
     status INT,
     battery INT,
@@ -237,10 +237,10 @@ CREATE TABLE alarms (
 
 ### Topic 规范
 
-- 定位数据：`device/{imei}/gps`
-- 状态数据：`device/{imei}/status`
-- 设备告警：`device/{imei}/alarm`
-- 服务器指令：`device/{imei}/cmd`
+- 定位数据：`device/{device_sn}/gps`
+- 状态数据：`device/{device_sn}/status`
+- 设备告警：`device/{device_sn}/alarm`
+- 服务器指令：`device/{device_sn}/cmd`
 
 ### GPS 消息示例
 
@@ -268,6 +268,8 @@ device/+/alarm
 MQTT
   ↓
 解析 JSON
+  ↓
+根据 topic 中的 `device_sn` 找到或创建设备
   ↓
 写入 gps_records
   ↓

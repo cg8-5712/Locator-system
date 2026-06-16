@@ -197,7 +197,7 @@ Locator/
 
 ### 设备
 
-设备唯一标识使用 `imei`，所有接入链路都围绕 `imei` 建立映射。
+设备唯一标识使用 `device_sn`，所有接入链路都围绕 `device_sn` 建立映射。
 
 ### GPS 记录
 
@@ -228,10 +228,10 @@ Broker 使用 EMQX。
 
 主题规范：
 
-- 设备定位上报：`device/{imei}/gps`
-- 设备状态上报：`device/{imei}/status`
-- 设备告警上报：`device/{imei}/alarm`
-- 服务器下发命令：`device/{imei}/cmd`
+- 设备定位上报：`device/{device_sn}/gps`
+- 设备状态上报：`device/{device_sn}/status`
+- 设备告警上报：`device/{device_sn}/alarm`
+- 服务器下发命令：`device/{device_sn}/cmd`
 
 服务启动后默认订阅：
 
@@ -243,7 +243,7 @@ GPS 消息标准流程：
 
 1. MQTT 收到消息
 2. 解析 JSON
-3. 根据 `imei` 找设备
+3. 根据 `device_sn` 找设备
 4. 写入 `gps_records`
 5. 更新设备最后在线时间与电量
 6. 执行围栏检测

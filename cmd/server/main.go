@@ -15,6 +15,7 @@ import (
 	"locator/internal/config"
 	"locator/internal/database"
 	mqttclient "locator/internal/mqtt"
+	"locator/internal/service"
 	"locator/pkg/logger"
 )
 
@@ -42,7 +43,8 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 		}
 	}()
 
-	mqttSvc := mqttclient.New(cfg.MQTT, appLogger)
+	mqttProcessor := service.NewMQTTMessageProcessor(dbStore.DB(), appLogger)
+	mqttSvc := mqttclient.New(cfg.MQTT, appLogger, mqttProcessor)
 	if err := mqttSvc.Start(rootCtx); err != nil {
 		return fmt.Errorf("start mqtt service: %w", err)
 	}
