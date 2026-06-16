@@ -13,6 +13,7 @@ import (
 
 	"locator/internal/api"
 	"locator/internal/config"
+	"locator/internal/database"
 	mqttclient "locator/internal/mqtt"
 	"locator/pkg/logger"
 )
@@ -31,13 +32,23 @@ func main() {
 }
 
 func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) error {
+	dbStore, err := database.Open(cfg.Database, appLogger)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() {
+		if closeErr := dbStore.Close(); closeErr != nil {
+			appLogger.Error("close database", "error", closeErr)
+		}
+	}()
+
 	mqttSvc := mqttclient.New(cfg.MQTT, appLogger)
 	if err := mqttSvc.Start(rootCtx); err != nil {
 		return fmt.Errorf("start mqtt service: %w", err)
 	}
 	defer mqttSvc.Close()
 
-	router := api.NewRouter(appLogger, mqttSvc)
+	router := api.NewRouter(appLogger, mqttSvc, dbStore)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           router,

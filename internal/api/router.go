@@ -22,6 +22,11 @@ type mqttService interface {
 	RecentMessages(limit int) []mqttclient.MessageSnapshot
 }
 
+type databaseService interface {
+	Driver() string
+	PingContext(ctx context.Context) error
+}
+
 type mqttPublishRequest struct {
 	Topic    string          `json:"topic" binding:"required"`
 	QoS      uint8           `json:"qos"`
@@ -29,17 +34,30 @@ type mqttPublishRequest struct {
 	Payload  json.RawMessage `json:"payload" binding:"required"`
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService) *gin.Engine {
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
 
 	router.GET("/health", func(c *gin.Context) {
+		dbConnected := false
+		dbDriver := ""
+		if dbSvc != nil {
+			dbDriver = dbSvc.Driver()
+
+			pingCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+
+			dbConnected = dbSvc.PingContext(pingCtx) == nil
+		}
+
 		ok(c, gin.H{
-			"status":         "ok",
-			"time":           time.Now().UTC(),
-			"mqtt_enabled":   mqttSvc.Enabled(),
-			"mqtt_connected": mqttSvc.Connected(),
+			"status":             "ok",
+			"time":               time.Now().UTC(),
+			"database_driver":    dbDriver,
+			"database_connected": dbConnected,
+			"mqtt_enabled":       mqttSvc.Enabled(),
+			"mqtt_connected":     mqttSvc.Connected(),
 		})
 	})
 

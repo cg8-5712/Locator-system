@@ -13,7 +13,7 @@ Locator 是一个面向 GPS + 4G 定位器的 Web 定位平台，目标是实现
 - Go 1.25
 - Gin
 - GORM
-- PostgreSQL
+- SQLite / PostgreSQL
 - Redis
 - EMQX
 
@@ -138,6 +138,12 @@ Locator/
 - `lib`：公共工具函数
 
 ## 数据库设计
+
+当前后端默认支持两种数据库模式：
+
+- 本地开发默认使用 SQLite，零依赖启动，数据库文件默认是 `locator.db`
+- 生产或联调环境可切换到 PostgreSQL，通过 `DB_DRIVER=postgres` 和 `DB_DSN=...` 配置
+- 服务启动时会使用 GORM 自动迁移基础表结构
 
 ### `users`
 

@@ -16,11 +16,22 @@ type Config struct {
 	LogLevel        string
 	ShutdownTimeout time.Duration
 	HTTP            HTTPConfig
+	Database        DatabaseConfig
 	MQTT            MQTTConfig
 }
 
 type HTTPConfig struct {
 	Addr string
+}
+
+type DatabaseConfig struct {
+	Driver          string
+	DSN             string
+	AutoMigrate     bool
+	MaxIdleConns    int
+	MaxOpenConns    int
+	ConnMaxIdleTime time.Duration
+	ConnMaxLifetime time.Duration
 }
 
 type MQTTConfig struct {
@@ -38,12 +49,23 @@ type MQTTConfig struct {
 func Load() Config {
 	loadEnvFiles(".env", ".env.local")
 
+	dbDriver := normalizeDatabaseDriver(getEnv("DB_DRIVER", "sqlite"))
+
 	return Config{
 		AppEnv:          getEnv("APP_ENV", "development"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		ShutdownTimeout: getDurationEnv("SHUTDOWN_TIMEOUT", 10*time.Second),
 		HTTP: HTTPConfig{
 			Addr: getEnv("HTTP_ADDR", ":8080"),
+		},
+		Database: DatabaseConfig{
+			Driver:          dbDriver,
+			DSN:             getEnv("DB_DSN", defaultDatabaseDSN(dbDriver)),
+			AutoMigrate:     getBoolEnv("DB_AUTO_MIGRATE", true),
+			MaxIdleConns:    getIntEnv("DB_MAX_IDLE_CONNS", 5),
+			MaxOpenConns:    getIntEnv("DB_MAX_OPEN_CONNS", 20),
+			ConnMaxIdleTime: getDurationEnv("DB_CONN_MAX_IDLE_TIME", 5*time.Minute),
+			ConnMaxLifetime: getDurationEnv("DB_CONN_MAX_LIFETIME", 30*time.Minute),
 		},
 		MQTT: MQTTConfig{
 			Enabled:          getBoolEnv("MQTT_ENABLED", false),
@@ -153,6 +175,20 @@ func getByteEnv(key string, defaultValue byte) byte {
 	return byte(parsed)
 }
 
+func getIntEnv(key string, defaultValue int) int {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return defaultValue
+	}
+
+	return parsed
+}
+
 func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 	value, ok := os.LookupEnv(key)
 	if !ok || strings.TrimSpace(value) == "" {
@@ -189,4 +225,23 @@ func getCSVEnv(key string, defaultValue []string) []string {
 	}
 
 	return result
+}
+
+func normalizeDatabaseDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "", "sqlite", "sqlite3":
+		return "sqlite"
+	case "postgres", "postgresql", "psql":
+		return "postgres"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
+}
+
+func defaultDatabaseDSN(driver string) string {
+	if driver == "postgres" {
+		return "host=127.0.0.1 user=postgres password=postgres dbname=locator port=5432 sslmode=disable TimeZone=UTC"
+	}
+
+	return "locator.db"
 }
