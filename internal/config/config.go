@@ -1,7 +1,11 @@
 package config
 
 import (
+	"bufio"
+	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +36,8 @@ type MQTTConfig struct {
 }
 
 func Load() Config {
+	loadEnvFiles(".env", ".env.local")
+
 	return Config{
 		AppEnv:          getEnv("APP_ENV", "development"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
@@ -51,6 +57,63 @@ func Load() Config {
 			OperationTimeout: getDurationEnv("MQTT_OPERATION_TIMEOUT", 5*time.Second),
 		},
 	}
+}
+
+func loadEnvFiles(paths ...string) {
+	for _, path := range paths {
+		if err := loadEnvFile(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+
+			fmt.Fprintf(os.Stderr, "config: skip env file %s: %v\n", path, err)
+		}
+	}
+}
+
+func loadEnvFile(path string) error {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+
+		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "\uFEFF"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("invalid line %d", lineNumber)
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("empty key on line %d", lineNumber)
+		}
+
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set %s from line %d: %w", key, lineNumber, err)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan env file: %w", err)
+	}
+
+	return nil
 }
 
 func getEnv(key string, defaultValue string) string {

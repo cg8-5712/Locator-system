@@ -10,8 +10,4 @@ $env:GOMODCACHE = (Resolve-Path ".cache\pkg\mod")
 $env:GOPATH = (Resolve-Path ".cache\go")
 $env:GOSUMDB = "off"
 
-if (-not $env:MQTT_ENABLED) {
-    $env:MQTT_ENABLED = "false"
-}
-
 go run ./cmd/server
