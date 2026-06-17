@@ -15,6 +15,7 @@ import (
 	"locator/internal/config"
 	"locator/internal/database"
 	mqttclient "locator/internal/mqtt"
+	"locator/internal/repository"
 	"locator/internal/service"
 	"locator/pkg/logger"
 )
@@ -43,6 +44,9 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 		}
 	}()
 
+	deviceRepo := repository.NewDeviceRepository(dbStore.DB())
+	deviceQuerySvc := service.NewDeviceQueryService(deviceRepo)
+
 	mqttProcessor := service.NewMQTTMessageProcessor(dbStore.DB(), appLogger)
 	mqttSvc := mqttclient.New(cfg.MQTT, appLogger, mqttProcessor)
 	if err := mqttSvc.Start(rootCtx); err != nil {
@@ -50,7 +54,7 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	}
 	defer mqttSvc.Close()
 
-	router := api.NewRouter(appLogger, mqttSvc, dbStore)
+	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceQuerySvc)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           router,

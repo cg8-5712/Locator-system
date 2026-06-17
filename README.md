@@ -439,6 +439,7 @@ POST /api/auth/login
 - `GET /api/devices/:id`
 - `PUT /api/devices/:id`
 - `GET /api/devices/:id/tracks`
+- `GET /api/devices/:id/tracks`
 - `GET /api/fences`
 - `POST /api/fences`
 - `GET /api/alarms`

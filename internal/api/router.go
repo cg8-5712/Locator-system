@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	mqttclient "locator/internal/mqtt"
+	"locator/internal/service"
 )
 
 type mqttService interface {
@@ -27,6 +28,12 @@ type databaseService interface {
 	PingContext(ctx context.Context) error
 }
 
+type deviceQueryService interface {
+	ListDevices(ctx context.Context, limit int) ([]service.DeviceSummary, error)
+	GetDevice(ctx context.Context, id uint64) (*service.DeviceSummary, error)
+	GetTrack(ctx context.Context, deviceID uint64, startTime *time.Time, endTime *time.Time, limit int) ([]service.DeviceTrackPoint, error)
+}
+
 type mqttPublishRequest struct {
 	Topic    string          `json:"topic" binding:"required"`
 	QoS      uint8           `json:"qos"`
@@ -34,7 +41,7 @@ type mqttPublishRequest struct {
 	Payload  json.RawMessage `json:"payload" binding:"required"`
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService) *gin.Engine {
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceQueryService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
@@ -63,6 +70,89 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 
 	apiGroup := router.Group("/api")
 	{
+		apiGroup.GET("/devices", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			limit := parsePositiveInt(c.Query("limit"), 50, 200)
+			devices, err := deviceSvc.ListDevices(c.Request.Context(), limit)
+			if err != nil {
+				fail(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			ok(c, gin.H{
+				"devices": devices,
+			})
+		})
+
+		apiGroup.GET("/devices/:id", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			deviceID, valid := parseUint64Param(c, "id")
+			if !valid {
+				return
+			}
+
+			device, err := deviceSvc.GetDevice(c.Request.Context(), deviceID)
+			if err != nil {
+				fail(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			if device == nil {
+				fail(c, http.StatusNotFound, "device not found")
+				return
+			}
+
+			ok(c, device)
+		})
+
+		apiGroup.GET("/devices/:id/tracks", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			deviceID, valid := parseUint64Param(c, "id")
+			if !valid {
+				return
+			}
+
+			startTime, err := parseOptionalTime(c.Query("start_time"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid start_time: "+err.Error())
+				return
+			}
+
+			endTime, err := parseOptionalTime(c.Query("end_time"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid end_time: "+err.Error())
+				return
+			}
+
+			limit := parsePositiveInt(c.Query("limit"), 500, 5000)
+			track, err := deviceSvc.GetTrack(c.Request.Context(), deviceID, startTime, endTime, limit)
+			if err != nil {
+				if errors.Is(err, service.ErrDeviceNotFound) {
+					fail(c, http.StatusNotFound, err.Error())
+					return
+				}
+
+				fail(c, http.StatusBadRequest, err.Error())
+				return
+			}
+
+			ok(c, gin.H{
+				"tracks": track,
+			})
+		})
+
 		apiGroup.GET("/mqtt/status", func(c *gin.Context) {
 			ok(c, gin.H{
 				"enabled":   mqttSvc.Enabled(),
@@ -157,4 +247,31 @@ func parsePositiveInt(raw string, defaultValue int, maxValue int) int {
 	}
 
 	return value
+}
+
+func parseUint64Param(c *gin.Context, key string) (uint64, bool) {
+	raw := c.Param(key)
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || value == 0 {
+		fail(c, http.StatusBadRequest, "invalid "+key)
+		return 0, false
+	}
+
+	return value, true
+}
+
+func parseOptionalTime(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil
+	}
+
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		parsed, err := time.Parse(layout, raw)
+		if err == nil {
+			parsed = parsed.UTC()
+			return &parsed, nil
+		}
+	}
+
+	return nil, errors.New("expected RFC3339 or 2006-01-02 15:04:05")
 }
