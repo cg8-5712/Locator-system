@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestMQTTMessageProcessorStoresGPSMessage(t *testing.T) {
 
 	err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
 		Topic:      "device/dev-001/gps",
-		Payload:    []byte(`{"lat":39.90123,"lng":116.31234,"speed":42.5,"altitude":15.2,"battery":86,"timestamp":1750000000}`),
+		Payload:    []byte(`{"lat":39.90123,"lng":116.31234,"battery":86,"imei":"860000000000001","iccid":"8986000000000000001","timestamp":1750000000}`),
 		QoS:        1,
 		Retained:   false,
 		ReceivedAt: receivedAt,
@@ -42,6 +43,14 @@ func TestMQTTMessageProcessorStoresGPSMessage(t *testing.T) {
 
 	if device.Battery != 86 {
 		t.Fatalf("device.Battery = %d, want 86", device.Battery)
+	}
+
+	if device.IMEI != "860000000000001" {
+		t.Fatalf("device.IMEI = %q, want %q", device.IMEI, "860000000000001")
+	}
+
+	if device.ICCID != "8986000000000000001" {
+		t.Fatalf("device.ICCID = %q, want %q", device.ICCID, "8986000000000000001")
 	}
 
 	if device.LastOnline == nil || !device.LastOnline.Equal(receivedAt) {
@@ -71,7 +80,7 @@ func TestMQTTMessageProcessorStoresStatusAndAlarmMessages(t *testing.T) {
 	statusReceivedAt := time.Date(2026, 6, 16, 8, 0, 0, 0, time.UTC)
 	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
 		Topic:      "device/dev-002/status",
-		Payload:    []byte(`{"battery":55,"status":2,"device_name":"Truck 2"}`),
+		Payload:    []byte(`{"battery":55,"status":2,"device_name":"Truck 2","imei":"860000000000002","iccid":"8986000000000000002"}`),
 		ReceivedAt: statusReceivedAt,
 	}); err != nil {
 		t.Fatalf("status HandleMessage() error = %v", err)
@@ -101,6 +110,14 @@ func TestMQTTMessageProcessorStoresStatusAndAlarmMessages(t *testing.T) {
 
 	if device.Battery != 55 {
 		t.Fatalf("device.Battery = %d, want 55", device.Battery)
+	}
+
+	if device.IMEI != "860000000000002" {
+		t.Fatalf("device.IMEI = %q, want %q", device.IMEI, "860000000000002")
+	}
+
+	if device.ICCID != "8986000000000000002" {
+		t.Fatalf("device.ICCID = %q, want %q", device.ICCID, "8986000000000000002")
 	}
 
 	if device.LastOnline == nil || !device.LastOnline.Equal(alarmReceivedAt) {
@@ -141,6 +158,35 @@ func TestParseDeviceTopic(t *testing.T) {
 
 	if _, err := parseDeviceTopic("device/device-100/command"); err == nil {
 		t.Fatal("parseDeviceTopic() expected error for unsupported topic kind")
+	}
+}
+
+func TestMQTTMessageProcessorRejectsBindingSameIMEIToAnotherDevice(t *testing.T) {
+	store := openTestStore(t)
+	defer closeTestStore(t, store)
+
+	processor := NewMQTTMessageProcessor(store.DB(), logger.New("error"))
+
+	err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "device/dev-a/status",
+		Payload:    []byte(`{"imei":"860000000000099"}`),
+		ReceivedAt: time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("first HandleMessage() error = %v", err)
+	}
+
+	err = processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "device/dev-b/status",
+		Payload:    []byte(`{"imei":"860000000000099"}`),
+		ReceivedAt: time.Date(2026, 6, 16, 9, 1, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("second HandleMessage() expected imei binding error")
+	}
+
+	if !strings.Contains(err.Error(), "already bound") {
+		t.Fatalf("second HandleMessage() error = %v, want imei binding error", err)
 	}
 }
 

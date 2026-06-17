@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,8 @@ type deviceTopic struct {
 	DeviceSN string
 	Kind     string
 }
+
+var imeiUniqueConstraintPattern = regexp.MustCompile(`(?i)(unique constraint failed: .*imei|duplicate key value.*imei)`)
 
 func NewMQTTMessageProcessor(db *gorm.DB, logger *slog.Logger) *MQTTMessageProcessor {
 	if logger == nil {
@@ -95,8 +98,6 @@ func (p *MQTTMessageProcessor) handleGPS(ctx context.Context, topic deviceTopic,
 		return errors.New("gps payload missing lng, lon or longitude")
 	}
 
-	speed, _ := lookupFloat64(payload, "speed")
-	altitude, _ := lookupFloat64(payload, "altitude", "alt")
 	gpsTime := lookupTimestamp(payload, message.ReceivedAt, "timestamp", "gps_time", "time")
 
 	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -109,8 +110,6 @@ func (p *MQTTMessageProcessor) handleGPS(ctx context.Context, topic deviceTopic,
 			DeviceID:  device.ID,
 			Latitude:  latitude,
 			Longitude: longitude,
-			Speed:     float32(speed),
-			Altitude:  float32(altitude),
 			GPSTime:   gpsTime.UTC(),
 		}
 
@@ -246,6 +245,10 @@ func updateDevice(tx *gorm.DB, deviceID uint64, updates map[string]any) error {
 	}
 
 	if err := tx.Model(&model.Device{}).Where("id = ?", deviceID).Updates(updates).Error; err != nil {
+		if imei, ok := updates["imei"].(string); ok && imei != "" && isIMEIUniqueConstraintError(err) {
+			return fmt.Errorf("imei %s is already bound to another device", imei)
+		}
+
 		return fmt.Errorf("update device %d: %w", deviceID, err)
 	}
 
@@ -255,6 +258,14 @@ func updateDevice(tx *gorm.DB, deviceID uint64, updates map[string]any) error {
 func buildDeviceUpdates(payload map[string]any, receivedAt time.Time) map[string]any {
 	updates := map[string]any{
 		"last_online": receivedAt.UTC(),
+	}
+
+	if imei, ok := lookupString(payload, "imei"); ok {
+		updates["imei"] = imei
+	}
+
+	if iccid, ok := lookupString(payload, "iccid"); ok {
+		updates["iccid"] = iccid
 	}
 
 	if name, ok := lookupString(payload, "device_name", "name"); ok {
@@ -276,6 +287,14 @@ func buildDeviceUpdates(payload map[string]any, receivedAt time.Time) map[string
 	}
 
 	return updates
+}
+
+func isIMEIUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return imeiUniqueConstraintPattern.MatchString(strings.ToLower(err.Error()))
 }
 
 func lookupString(payload map[string]any, keys ...string) (string, bool) {

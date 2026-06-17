@@ -55,18 +55,7 @@ Locator 是一个面向 GPS + 4G 定位器的 Web 定位平台，目标是实现
 
 这意味着项目重点是平台能力，不是静态地图页面。
 
-## Go 学习目标
-
-通过这个项目，逐步达到以下能力：
-
-1. 能读懂常见 Go 项目结构和后端代码流转。
-2. 能识别常见 Go 错误，包括空指针、错误未处理、切片误用、goroutine 泄漏和 `context` 使用错误。
-3. 能独立写简单 Go 代码，包括结构体、方法、接口、HTTP handler、基础数据库读写和简单并发。
-4. 能深入理解一个 Go 服务的生命周期，以及 `context.Context` 在请求链路、超时控制和优雅退出中的作用。
-
-详细学习路线见 [GO_LEARNING.md](GO_LEARNING.md)。
-
-## 建议目录结构
+## 目录结构
 
 ```text
 Locator/
@@ -144,6 +133,7 @@ Locator/
 - 本地开发默认使用 SQLite，零依赖启动，数据库文件默认是 `locator.db`
 - 生产或联调环境可切换到 PostgreSQL，通过 `DB_DRIVER=postgres` 和 `DB_DSN=...` 配置
 - 服务启动时会使用 GORM 自动迁移基础表结构
+- 当前设备模型同时保存 `device_sn`、`imei`、`iccid`，其中 `device_sn` 用于 MQTT topic 路由，`imei` 用于设备唯一绑定
 
 ### `users`
 
@@ -163,6 +153,8 @@ CREATE TABLE users (
 CREATE TABLE devices (
     id BIGSERIAL PRIMARY KEY,
     device_sn VARCHAR(64) UNIQUE,
+    imei VARCHAR(32) UNIQUE,
+    iccid VARCHAR(32),
     name VARCHAR(64),
     status INT,
     battery INT,
@@ -181,8 +173,6 @@ CREATE TABLE gps_records (
     device_id BIGINT,
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION,
-    speed REAL,
-    altitude REAL,
     gps_time TIMESTAMP,
     created_at TIMESTAMP
 );
@@ -248,8 +238,9 @@ CREATE TABLE alarms (
 {
   "lat": 39.90123,
   "lng": 116.31234,
-  "speed": 42.5,
   "battery": 86,
+  "imei": "860000000000001",
+  "iccid": "8986000000000000001",
   "timestamp": 1750000000
 }
 ```
@@ -309,7 +300,6 @@ WebSocket 推送前端
     "device": "86888888",
     "lat": 39.90,
     "lng": 116.31,
-    "speed": 42.5,
     "time": "2026-06-15T10:00:00Z"
   }
 }

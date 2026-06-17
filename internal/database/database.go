@@ -77,6 +77,11 @@ func Open(cfg config.DatabaseConfig, appLogger *slog.Logger) (*Store, error) {
 			_ = sqlDB.Close()
 			return nil, fmt.Errorf("auto migrate %s database: %w", driver, err)
 		}
+
+		if err := cleanupDeprecatedColumns(gormDB); err != nil {
+			_ = sqlDB.Close()
+			return nil, fmt.Errorf("cleanup deprecated columns in %s database: %w", driver, err)
+		}
 	}
 
 	appLogger.Info("database connected",
@@ -166,6 +171,20 @@ func ensureSQLitePath(dsn string) error {
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func cleanupDeprecatedColumns(db *gorm.DB) error {
+	migrator := db.Migrator()
+
+	for _, column := range []string{"speed", "altitude"} {
+		if migrator.HasColumn(&model.GPSRecord{}, column) {
+			if err := migrator.DropColumn(&model.GPSRecord{}, column); err != nil {
+				return fmt.Errorf("drop gps_records.%s: %w", column, err)
+			}
+		}
 	}
 
 	return nil

@@ -197,7 +197,7 @@ Locator/
 
 ### 设备
 
-设备唯一标识使用 `device_sn`，所有接入链路都围绕 `device_sn` 建立映射。
+设备接入链路使用 `device_sn` 作为 topic 路由键，同时在设备表中维护 `device_sn`、`imei`、`iccid` 的绑定关系。
 
 ### GPS 记录
 

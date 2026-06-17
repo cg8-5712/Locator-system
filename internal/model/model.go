@@ -21,6 +21,8 @@ func (User) TableName() string {
 type Device struct {
 	ID         uint64     `json:"id" gorm:"primaryKey"`
 	DeviceSN   string     `json:"device_sn" gorm:"column:device_sn;size:64;uniqueIndex;not null"`
+	IMEI       string     `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
+	ICCID      string     `json:"iccid" gorm:"column:iccid;size:32;index"`
 	Name       string     `json:"name" gorm:"size:64"`
 	Status     int        `json:"status" gorm:"not null;default:0"`
 	Battery    int        `json:"battery" gorm:"not null;default:0"`
@@ -37,8 +39,6 @@ type GPSRecord struct {
 	DeviceID  uint64    `json:"device_id" gorm:"column:device_id;not null;index:idx_gps_records_device_time,priority:1"`
 	Latitude  float64   `json:"latitude" gorm:"column:latitude;not null"`
 	Longitude float64   `json:"longitude" gorm:"column:longitude;not null"`
-	Speed     float32   `json:"speed" gorm:"column:speed;not null;default:0"`
-	Altitude  float32   `json:"altitude" gorm:"column:altitude;not null;default:0"`
 	GPSTime   time.Time `json:"gps_time" gorm:"column:gps_time;not null;index:idx_gps_records_device_time,priority:2"`
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
 }

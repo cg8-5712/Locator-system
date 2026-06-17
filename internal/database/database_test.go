@@ -48,4 +48,20 @@ func TestOpenSQLiteAutoMigrate(t *testing.T) {
 			t.Fatalf("expected table for %T to exist", table)
 		}
 	}
+
+	if store.DB().Migrator().HasColumn(&model.GPSRecord{}, "speed") {
+		t.Fatal("expected gps_records.speed column to be removed")
+	}
+
+	if store.DB().Migrator().HasColumn(&model.GPSRecord{}, "altitude") {
+		t.Fatal("expected gps_records.altitude column to be removed")
+	}
+
+	if !store.DB().Migrator().HasColumn(&model.Device{}, "imei") {
+		t.Fatal("expected devices.imei column to exist")
+	}
+
+	if !store.DB().Migrator().HasColumn(&model.Device{}, "iccid") {
+		t.Fatal("expected devices.iccid column to exist")
+	}
 }
