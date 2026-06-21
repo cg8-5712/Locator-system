@@ -45,7 +45,7 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	}()
 
 	deviceRepo := repository.NewDeviceRepository(dbStore.DB())
-	deviceQuerySvc := service.NewDeviceQueryService(deviceRepo)
+	deviceSvc := service.NewDeviceService(deviceRepo)
 
 	mqttProcessor := service.NewMQTTMessageProcessor(dbStore.DB(), appLogger)
 	mqttSvc := mqttclient.New(cfg.MQTT, appLogger, mqttProcessor)
@@ -54,7 +54,7 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	}
 	defer mqttSvc.Close()
 
-	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceQuerySvc)
+	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceSvc)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           router,

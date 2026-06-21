@@ -21,8 +21,8 @@ func (User) TableName() string {
 type Device struct {
 	ID         uint64     `json:"id" gorm:"primaryKey"`
 	DeviceSN   string     `json:"device_sn" gorm:"column:device_sn;size:64;uniqueIndex;not null"`
-	IMEI       string     `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
-	ICCID      string     `json:"iccid" gorm:"column:iccid;size:32;index"`
+	IMEI       *string    `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
+	ICCID      *string    `json:"iccid" gorm:"column:iccid;size:32;index"`
 	Name       string     `json:"name" gorm:"size:64"`
 	Status     int        `json:"status" gorm:"not null;default:0"`
 	Battery    int        `json:"battery" gorm:"not null;default:0"`

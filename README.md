@@ -378,13 +378,15 @@ if speed > 80 {
 ## 历史轨迹接口
 
 ```http
-GET /api/device/:id/tracks
+GET /api/devices/:device_sn/tracks
 ```
 
 查询参数：
 
 - `start_time`
 - `end_time`
+- `page`
+- `page_size`
 
 返回示例：
 
@@ -436,10 +438,9 @@ POST /api/auth/login
 - `POST /api/users`
 - `GET /api/devices`
 - `POST /api/devices`
-- `GET /api/devices/:id`
-- `PUT /api/devices/:id`
-- `GET /api/devices/:id/tracks`
-- `GET /api/devices/:id/tracks`
+- `GET /api/devices/:device_sn`
+- `PUT /api/devices/:device_sn`
+- `GET /api/devices/:device_sn/tracks`
 - `GET /api/fences`
 - `POST /api/fences`
 - `GET /api/alarms`

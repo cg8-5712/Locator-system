@@ -28,10 +28,12 @@ type databaseService interface {
 	PingContext(ctx context.Context) error
 }
 
-type deviceQueryService interface {
-	ListDevices(ctx context.Context, limit int) ([]service.DeviceSummary, error)
-	GetDevice(ctx context.Context, id uint64) (*service.DeviceSummary, error)
-	GetTrack(ctx context.Context, deviceID uint64, startTime *time.Time, endTime *time.Time, limit int) ([]service.DeviceTrackPoint, error)
+type deviceService interface {
+	ListDevices(ctx context.Context, query service.DeviceListQuery) (*service.DeviceListResult, error)
+	GetDevice(ctx context.Context, deviceSN string) (*service.DeviceSummary, error)
+	GetTrack(ctx context.Context, deviceSN string, query service.TrackQuery) (*service.DeviceTrackResult, error)
+	CreateDevice(ctx context.Context, input service.DeviceCreateInput) (*service.DeviceSummary, error)
+	UpdateDevice(ctx context.Context, deviceSN string, input service.DeviceUpdateInput) (*service.DeviceSummary, error)
 }
 
 type mqttPublishRequest struct {
@@ -41,7 +43,20 @@ type mqttPublishRequest struct {
 	Payload  json.RawMessage `json:"payload" binding:"required"`
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceQueryService) *gin.Engine {
+type deviceUpsertRequest struct {
+	IMEI    *string `json:"imei"`
+	ICCID   *string `json:"iccid"`
+	Name    *string `json:"name"`
+	Status  *int    `json:"status"`
+	Battery *int    `json:"battery"`
+}
+
+type deviceCreateRequest struct {
+	DeviceSN string `json:"device_sn" binding:"required"`
+	deviceUpsertRequest
+}
+
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
@@ -76,51 +91,105 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 				return
 			}
 
-			limit := parsePositiveInt(c.Query("limit"), 50, 200)
-			devices, err := deviceSvc.ListDevices(c.Request.Context(), limit)
+			status, err := parseOptionalInt(c.Query("status"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid status: "+err.Error())
+				return
+			}
+
+			result, err := deviceSvc.ListDevices(c.Request.Context(), service.DeviceListQuery{
+				DeviceSN: c.Query("device_sn"),
+				IMEI:     c.Query("imei"),
+				ICCID:    c.Query("iccid"),
+				Name:     c.Query("name"),
+				Status:   status,
+				Page:     parsePositiveInt(c.Query("page"), 1, 100000),
+				PageSize: parsePositiveInt(c.Query("page_size"), 20, 200),
+			})
 			if err != nil {
 				fail(c, http.StatusInternalServerError, err.Error())
 				return
 			}
 
-			ok(c, gin.H{
-				"devices": devices,
-			})
+			ok(c, result)
 		})
 
-		apiGroup.GET("/devices/:id", func(c *gin.Context) {
+		apiGroup.POST("/devices", func(c *gin.Context) {
 			if deviceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
 				return
 			}
 
-			deviceID, valid := parseUint64Param(c, "id")
-			if !valid {
+			var req deviceCreateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid create device request: "+err.Error())
 				return
 			}
 
-			device, err := deviceSvc.GetDevice(c.Request.Context(), deviceID)
+			device, err := deviceSvc.CreateDevice(c.Request.Context(), service.DeviceCreateInput{
+				DeviceSN: req.DeviceSN,
+				IMEI:     req.IMEI,
+				ICCID:    req.ICCID,
+				Name:     req.Name,
+				Status:   req.Status,
+				Battery:  req.Battery,
+			})
 			if err != nil {
-				fail(c, http.StatusInternalServerError, err.Error())
+				handleDeviceServiceError(c, err)
 				return
 			}
 
-			if device == nil {
-				fail(c, http.StatusNotFound, "device not found")
+			c.JSON(http.StatusCreated, gin.H{
+				"success": true,
+				"data":    device,
+			})
+		})
+
+		apiGroup.GET("/devices/:device_sn", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			device, err := deviceSvc.GetDevice(c.Request.Context(), c.Param("device_sn"))
+			if err != nil {
+				handleDeviceServiceError(c, err)
 				return
 			}
 
 			ok(c, device)
 		})
 
-		apiGroup.GET("/devices/:id/tracks", func(c *gin.Context) {
+		apiGroup.PUT("/devices/:device_sn", func(c *gin.Context) {
 			if deviceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
 				return
 			}
 
-			deviceID, valid := parseUint64Param(c, "id")
-			if !valid {
+			var req deviceUpsertRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid update device request: "+err.Error())
+				return
+			}
+
+			device, err := deviceSvc.UpdateDevice(c.Request.Context(), c.Param("device_sn"), service.DeviceUpdateInput{
+				IMEI:    req.IMEI,
+				ICCID:   req.ICCID,
+				Name:    req.Name,
+				Status:  req.Status,
+				Battery: req.Battery,
+			})
+			if err != nil {
+				handleDeviceServiceError(c, err)
+				return
+			}
+
+			ok(c, device)
+		})
+
+		apiGroup.GET("/devices/:device_sn/tracks", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
 				return
 			}
 
@@ -136,21 +205,18 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 				return
 			}
 
-			limit := parsePositiveInt(c.Query("limit"), 500, 5000)
-			track, err := deviceSvc.GetTrack(c.Request.Context(), deviceID, startTime, endTime, limit)
+			result, err := deviceSvc.GetTrack(c.Request.Context(), c.Param("device_sn"), service.TrackQuery{
+				StartTime: startTime,
+				EndTime:   endTime,
+				Page:      parsePositiveInt(c.Query("page"), 1, 100000),
+				PageSize:  parsePositiveInt(c.Query("page_size"), 100, 500),
+			})
 			if err != nil {
-				if errors.Is(err, service.ErrDeviceNotFound) {
-					fail(c, http.StatusNotFound, err.Error())
-					return
-				}
-
-				fail(c, http.StatusBadRequest, err.Error())
+				handleDeviceServiceError(c, err)
 				return
 			}
 
-			ok(c, gin.H{
-				"tracks": track,
-			})
+			ok(c, result)
 		})
 
 		apiGroup.GET("/mqtt/status", func(c *gin.Context) {
@@ -232,6 +298,19 @@ func fail(c *gin.Context, statusCode int, message string) {
 	})
 }
 
+func handleDeviceServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrDeviceNotFound):
+		fail(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrDeviceSNConflict), errors.Is(err, service.ErrIMEIConflict):
+		fail(c, http.StatusConflict, err.Error())
+	case errors.Is(err, service.ErrNoDeviceFieldChange):
+		fail(c, http.StatusBadRequest, err.Error())
+	default:
+		fail(c, http.StatusBadRequest, err.Error())
+	}
+}
+
 func parsePositiveInt(raw string, defaultValue int, maxValue int) int {
 	if raw == "" {
 		return defaultValue
@@ -249,15 +328,17 @@ func parsePositiveInt(raw string, defaultValue int, maxValue int) int {
 	return value
 }
 
-func parseUint64Param(c *gin.Context, key string) (uint64, bool) {
-	raw := c.Param(key)
-	value, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil || value == 0 {
-		fail(c, http.StatusBadRequest, "invalid "+key)
-		return 0, false
+func parseOptionalInt(raw string) (*int, error) {
+	if raw == "" {
+		return nil, nil
 	}
 
-	return value, true
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	return &value, nil
 }
 
 func parseOptionalTime(raw string) (*time.Time, error) {

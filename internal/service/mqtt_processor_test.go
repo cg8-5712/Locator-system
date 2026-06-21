@@ -45,12 +45,12 @@ func TestMQTTMessageProcessorStoresGPSMessage(t *testing.T) {
 		t.Fatalf("device.Battery = %d, want 86", device.Battery)
 	}
 
-	if device.IMEI != "860000000000001" {
-		t.Fatalf("device.IMEI = %q, want %q", device.IMEI, "860000000000001")
+	if device.IMEI == nil || *device.IMEI != "860000000000001" {
+		t.Fatalf("device.IMEI = %v, want %q", device.IMEI, "860000000000001")
 	}
 
-	if device.ICCID != "8986000000000000001" {
-		t.Fatalf("device.ICCID = %q, want %q", device.ICCID, "8986000000000000001")
+	if device.ICCID == nil || *device.ICCID != "8986000000000000001" {
+		t.Fatalf("device.ICCID = %v, want %q", device.ICCID, "8986000000000000001")
 	}
 
 	if device.LastOnline == nil || !device.LastOnline.Equal(receivedAt) {
@@ -112,12 +112,12 @@ func TestMQTTMessageProcessorStoresStatusAndAlarmMessages(t *testing.T) {
 		t.Fatalf("device.Battery = %d, want 55", device.Battery)
 	}
 
-	if device.IMEI != "860000000000002" {
-		t.Fatalf("device.IMEI = %q, want %q", device.IMEI, "860000000000002")
+	if device.IMEI == nil || *device.IMEI != "860000000000002" {
+		t.Fatalf("device.IMEI = %v, want %q", device.IMEI, "860000000000002")
 	}
 
-	if device.ICCID != "8986000000000000002" {
-		t.Fatalf("device.ICCID = %q, want %q", device.ICCID, "8986000000000000002")
+	if device.ICCID == nil || *device.ICCID != "8986000000000000002" {
+		t.Fatalf("device.ICCID = %v, want %q", device.ICCID, "8986000000000000002")
 	}
 
 	if device.LastOnline == nil || !device.LastOnline.Equal(alarmReceivedAt) {
