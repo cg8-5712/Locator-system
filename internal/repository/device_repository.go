@@ -111,6 +111,37 @@ func (r *DeviceRepository) UpdateByDeviceSN(ctx context.Context, deviceSN string
 	return r.GetByDeviceSN(ctx, deviceSN)
 }
 
+func (r *DeviceRepository) DeleteByDeviceSN(ctx context.Context, deviceSN string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var device model.Device
+		if err := tx.Where("device_sn = ?", deviceSN).Take(&device).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrDeviceNotFound
+			}
+
+			return fmt.Errorf("load device %s for delete: %w", deviceSN, err)
+		}
+
+		if err := tx.Where("device_id = ?", device.ID).Delete(&model.GPSRecord{}).Error; err != nil {
+			return fmt.Errorf("delete gps records for device %s: %w", deviceSN, err)
+		}
+
+		if err := tx.Where("device_id = ?", device.ID).Delete(&model.Fence{}).Error; err != nil {
+			return fmt.Errorf("delete fences for device %s: %w", deviceSN, err)
+		}
+
+		if err := tx.Where("device_id = ?", device.ID).Delete(&model.Alarm{}).Error; err != nil {
+			return fmt.Errorf("delete alarms for device %s: %w", deviceSN, err)
+		}
+
+		if err := tx.Delete(&model.Device{}, "id = ?", device.ID).Error; err != nil {
+			return fmt.Errorf("delete device %s: %w", deviceSN, err)
+		}
+
+		return nil
+	})
+}
+
 func (r *DeviceRepository) GetTrackByDeviceID(ctx context.Context, deviceID uint64, filter TrackPageFilter) ([]model.GPSRecord, int64, error) {
 	var (
 		records []model.GPSRecord

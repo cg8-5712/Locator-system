@@ -402,6 +402,23 @@ GET /api/devices/:device_sn/tracks
 
 前端地图使用 `Polyline` 绘制轨迹，轨迹回放可在此基础上做时间进度控制。
 
+## 告警查询接口
+
+```http
+GET /api/alarms
+```
+
+查询参数：
+
+- `device_sn`
+- `type`
+- `start_time`
+- `end_time`
+- `page`
+- `page_size`
+
+返回结果会按告警时间倒序分页，并直接返回 `device_sn`，不会暴露内部 `device_id`。
+
 ## 认证与权限
 
 第一版角色只保留：
@@ -440,6 +457,7 @@ POST /api/auth/login
 - `POST /api/devices`
 - `GET /api/devices/:device_sn`
 - `PUT /api/devices/:device_sn`
+- `DELETE /api/devices/:device_sn`
 - `GET /api/devices/:device_sn/tracks`
 - `GET /api/fences`
 - `POST /api/fences`

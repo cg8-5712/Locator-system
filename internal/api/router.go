@@ -34,6 +34,11 @@ type deviceService interface {
 	GetTrack(ctx context.Context, deviceSN string, query service.TrackQuery) (*service.DeviceTrackResult, error)
 	CreateDevice(ctx context.Context, input service.DeviceCreateInput) (*service.DeviceSummary, error)
 	UpdateDevice(ctx context.Context, deviceSN string, input service.DeviceUpdateInput) (*service.DeviceSummary, error)
+	DeleteDevice(ctx context.Context, deviceSN string) error
+}
+
+type alarmService interface {
+	ListAlarms(ctx context.Context, query service.AlarmListQuery) (*service.AlarmListResult, error)
 }
 
 type mqttPublishRequest struct {
@@ -56,7 +61,7 @@ type deviceCreateRequest struct {
 	deviceUpsertRequest
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService) *gin.Engine {
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
@@ -219,6 +224,58 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, result)
 		})
 
+		apiGroup.DELETE("/devices/:device_sn", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			deviceSN := c.Param("device_sn")
+			if err := deviceSvc.DeleteDevice(c.Request.Context(), deviceSN); err != nil {
+				handleDeviceServiceError(c, err)
+				return
+			}
+
+			ok(c, gin.H{
+				"deleted":   true,
+				"device_sn": deviceSN,
+			})
+		})
+
+		apiGroup.GET("/alarms", func(c *gin.Context) {
+			if alarmSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "alarm service is unavailable")
+				return
+			}
+
+			startTime, err := parseOptionalTime(c.Query("start_time"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid start_time: "+err.Error())
+				return
+			}
+
+			endTime, err := parseOptionalTime(c.Query("end_time"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid end_time: "+err.Error())
+				return
+			}
+
+			result, err := alarmSvc.ListAlarms(c.Request.Context(), service.AlarmListQuery{
+				DeviceSN:  c.Query("device_sn"),
+				Type:      c.Query("type"),
+				StartTime: startTime,
+				EndTime:   endTime,
+				Page:      parsePositiveInt(c.Query("page"), 1, 100000),
+				PageSize:  parsePositiveInt(c.Query("page_size"), 20, 200),
+			})
+			if err != nil {
+				handleAlarmServiceError(c, err)
+				return
+			}
+
+			ok(c, result)
+		})
+
 		apiGroup.GET("/mqtt/status", func(c *gin.Context) {
 			ok(c, gin.H{
 				"enabled":   mqttSvc.Enabled(),
@@ -304,10 +361,19 @@ func handleDeviceServiceError(c *gin.Context, err error) {
 		fail(c, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrDeviceSNConflict), errors.Is(err, service.ErrIMEIConflict):
 		fail(c, http.StatusConflict, err.Error())
-	case errors.Is(err, service.ErrNoDeviceFieldChange):
+	case errors.Is(err, service.ErrNoDeviceFieldChange), errors.Is(err, service.ErrInvalidTimeRange):
 		fail(c, http.StatusBadRequest, err.Error())
 	default:
 		fail(c, http.StatusBadRequest, err.Error())
+	}
+}
+
+func handleAlarmServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidTimeRange):
+		fail(c, http.StatusBadRequest, err.Error())
+	default:
+		fail(c, http.StatusInternalServerError, err.Error())
 	}
 }
 

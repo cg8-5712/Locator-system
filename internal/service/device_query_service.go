@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ var (
 	ErrDeviceSNConflict    = errors.New("device_sn already exists")
 	ErrIMEIConflict        = errors.New("imei is already bound to another device")
 	ErrNoDeviceFieldChange = errors.New("no device fields to update")
+	ErrInvalidTimeRange    = errors.New("start_time must be before end_time")
 )
 
 type DeviceService struct {
@@ -149,8 +149,8 @@ func (s *DeviceService) GetTrack(ctx context.Context, deviceSN string, query Tra
 		return nil, err
 	}
 
-	if query.StartTime != nil && query.EndTime != nil && query.StartTime.After(*query.EndTime) {
-		return nil, fmt.Errorf("start_time must be before end_time")
+	if err := validateTimeRange(query.StartTime, query.EndTime); err != nil {
+		return nil, err
 	}
 
 	device, err := s.repo.GetByDeviceSN(ctx, normalizedSN)
@@ -269,6 +269,19 @@ func (s *DeviceService) UpdateDevice(ctx context.Context, deviceSN string, input
 	return &summary, nil
 }
 
+func (s *DeviceService) DeleteDevice(ctx context.Context, deviceSN string) error {
+	normalizedSN, err := normalizeDeviceSN(deviceSN)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.DeleteByDeviceSN(ctx, normalizedSN); err != nil {
+		return translateRepositoryError(err)
+	}
+
+	return nil
+}
+
 func translateRepositoryError(err error) error {
 	switch {
 	case errors.Is(err, repository.ErrDeviceNotFound):
@@ -363,6 +376,14 @@ func validateBattery(battery *int) error {
 
 	if *battery < 0 || *battery > 100 {
 		return errors.New("battery must be between 0 and 100")
+	}
+
+	return nil
+}
+
+func validateTimeRange(startTime *time.Time, endTime *time.Time) error {
+	if startTime != nil && endTime != nil && startTime.After(*endTime) {
+		return ErrInvalidTimeRange
 	}
 
 	return nil

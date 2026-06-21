@@ -203,6 +203,83 @@ func TestDeviceServiceRejectsInvalidDeviceSNAndBattery(t *testing.T) {
 	}
 }
 
+func TestDeviceServiceDeleteDeviceCascadesRelatedData(t *testing.T) {
+	store := openTestStore(t)
+	defer closeTestStore(t, store)
+
+	svc := NewDeviceService(repository.NewDeviceRepository(store.DB()))
+
+	created, err := svc.CreateDevice(context.Background(), DeviceCreateInput{
+		DeviceSN: "dev-delete",
+	})
+	if err != nil {
+		t.Fatalf("CreateDevice() error = %v", err)
+	}
+
+	var stored model.Device
+	if err := store.DB().Where("device_sn = ?", created.DeviceSN).Take(&stored).Error; err != nil {
+		t.Fatalf("load stored device error = %v", err)
+	}
+
+	fence := model.Fence{
+		DeviceID: stored.ID,
+		Name:     "fence-1",
+		Polygon:  []byte(`[[39.9,116.3],[39.91,116.31],[39.92,116.32]]`),
+	}
+	alarm := model.Alarm{
+		DeviceID: stored.ID,
+		Type:     "sos",
+		Content:  "help",
+	}
+	record := model.GPSRecord{
+		DeviceID:  stored.ID,
+		Latitude:  39.90,
+		Longitude: 116.30,
+		GPSTime:   time.Date(2026, 6, 21, 13, 0, 0, 0, time.UTC),
+	}
+
+	if err := store.DB().Create(&fence).Error; err != nil {
+		t.Fatalf("create fence error = %v", err)
+	}
+	if err := store.DB().Create(&alarm).Error; err != nil {
+		t.Fatalf("create alarm error = %v", err)
+	}
+	if err := store.DB().Create(&record).Error; err != nil {
+		t.Fatalf("create gps record error = %v", err)
+	}
+
+	if err := svc.DeleteDevice(context.Background(), created.DeviceSN); err != nil {
+		t.Fatalf("DeleteDevice() error = %v", err)
+	}
+
+	_, err = svc.GetDevice(context.Background(), created.DeviceSN)
+	if !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("GetDevice() after delete error = %v, want ErrDeviceNotFound", err)
+	}
+
+	var count int64
+	if err := store.DB().Model(&model.GPSRecord{}).Where("device_id = ?", stored.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count gps records error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("gps record count = %d, want 0", count)
+	}
+
+	if err := store.DB().Model(&model.Fence{}).Where("device_id = ?", stored.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count fences error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("fence count = %d, want 0", count)
+	}
+
+	if err := store.DB().Model(&model.Alarm{}).Where("device_id = ?", stored.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count alarms error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("alarm count = %d, want 0", count)
+	}
+}
+
 func intPtr(value int) *int {
 	return &value
 }
