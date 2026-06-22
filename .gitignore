@@ -3,3 +3,5 @@
 .env
 *.exe
 *.db
+web/node_modules/
+web/dist/
