@@ -76,20 +76,24 @@ type DeviceTrackResult struct {
 }
 
 type DeviceSummary struct {
-	DeviceSN   string     `json:"device_sn"`
-	IMEI       string     `json:"imei"`
-	ICCID      string     `json:"iccid"`
-	Name       string     `json:"name"`
-	Status     int        `json:"status"`
-	Battery    int        `json:"battery"`
-	LastOnline *time.Time `json:"last_online"`
-	CreatedAt  time.Time  `json:"created_at"`
+	DeviceSN    string     `json:"device_sn"`
+	IMEI        string     `json:"imei"`
+	ICCID       string     `json:"iccid"`
+	Name        string     `json:"name"`
+	TopicPrefix string     `json:"topic_prefix"`
+	GPSState    string     `json:"gps_state"`
+	Status      int        `json:"status"`
+	Battery     int        `json:"battery"`
+	LastFixAt   *time.Time `json:"last_fix_at"`
+	LastOnline  *time.Time `json:"last_online"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type DeviceTrackPoint struct {
-	Latitude  float64   `json:"lat"`
-	Longitude float64   `json:"lng"`
-	Time      time.Time `json:"time"`
+	Latitude     float64   `json:"lat"`
+	Longitude    float64   `json:"lng"`
+	Time         time.Time `json:"time"`
+	StillSeconds int       `json:"still_seconds"`
 }
 
 func NewDeviceService(repo *repository.DeviceRepository) *DeviceService {
@@ -178,9 +182,10 @@ func (s *DeviceService) GetTrack(ctx context.Context, deviceSN string, query Tra
 	points := make([]DeviceTrackPoint, 0, len(records))
 	for _, record := range records {
 		points = append(points, DeviceTrackPoint{
-			Latitude:  record.Latitude,
-			Longitude: record.Longitude,
-			Time:      record.GPSTime,
+			Latitude:     record.Latitude,
+			Longitude:    record.Longitude,
+			Time:         record.GPSTime,
+			StillSeconds: record.StillSeconds,
 		})
 	}
 
@@ -202,7 +207,8 @@ func (s *DeviceService) CreateDevice(ctx context.Context, input DeviceCreateInpu
 	}
 
 	device := model.Device{
-		DeviceSN: deviceSN,
+		DeviceSN:    deviceSN,
+		TopicPrefix: "locator",
 	}
 
 	if imei := normalizeNullableString(input.IMEI); imei != nil {
@@ -297,14 +303,17 @@ func translateRepositoryError(err error) error {
 
 func mapDeviceSummary(device model.Device) DeviceSummary {
 	return DeviceSummary{
-		DeviceSN:   device.DeviceSN,
-		IMEI:       stringValue(device.IMEI),
-		ICCID:      stringValue(device.ICCID),
-		Name:       device.Name,
-		Status:     device.Status,
-		Battery:    device.Battery,
-		LastOnline: device.LastOnline,
-		CreatedAt:  device.CreatedAt,
+		DeviceSN:    device.DeviceSN,
+		IMEI:        stringValue(device.IMEI),
+		ICCID:       stringValue(device.ICCID),
+		Name:        device.Name,
+		TopicPrefix: device.TopicPrefix,
+		GPSState:    device.GPSState,
+		Status:      device.Status,
+		Battery:     device.Battery,
+		LastFixAt:   device.LastFixAt,
+		LastOnline:  device.LastOnline,
+		CreatedAt:   device.CreatedAt,
 	}
 }
 

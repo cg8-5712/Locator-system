@@ -19,15 +19,18 @@ func (User) TableName() string {
 }
 
 type Device struct {
-	ID         uint64     `json:"id" gorm:"primaryKey"`
-	DeviceSN   string     `json:"device_sn" gorm:"column:device_sn;size:64;uniqueIndex;not null"`
-	IMEI       *string    `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
-	ICCID      *string    `json:"iccid" gorm:"column:iccid;size:32;index"`
-	Name       string     `json:"name" gorm:"size:64"`
-	Status     int        `json:"status" gorm:"not null;default:0"`
-	Battery    int        `json:"battery" gorm:"not null;default:0"`
-	LastOnline *time.Time `json:"last_online" gorm:"column:last_online"`
-	CreatedAt  time.Time  `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
+	ID          uint64     `json:"id" gorm:"primaryKey"`
+	DeviceSN    string     `json:"device_sn" gorm:"column:device_sn;size:64;uniqueIndex;not null"`
+	IMEI        *string    `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
+	ICCID       *string    `json:"iccid" gorm:"column:iccid;size:32;index"`
+	Name        string     `json:"name" gorm:"size:64"`
+	TopicPrefix string     `json:"topic_prefix" gorm:"column:topic_prefix;size:32;not null;default:locator"`
+	GPSState    string     `json:"gps_state" gorm:"column:gps_state;size:32"`
+	Status      int        `json:"status" gorm:"not null;default:0"`
+	Battery     int        `json:"battery" gorm:"not null;default:0"`
+	LastFixAt   *time.Time `json:"last_fix_at" gorm:"column:last_fix_at"`
+	LastOnline  *time.Time `json:"last_online" gorm:"column:last_online"`
+	CreatedAt   time.Time  `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
 }
 
 func (Device) TableName() string {
@@ -35,12 +38,13 @@ func (Device) TableName() string {
 }
 
 type GPSRecord struct {
-	ID        uint64    `json:"id" gorm:"primaryKey"`
-	DeviceID  uint64    `json:"device_id" gorm:"column:device_id;not null;index:idx_gps_records_device_time,priority:1"`
-	Latitude  float64   `json:"latitude" gorm:"column:latitude;not null"`
-	Longitude float64   `json:"longitude" gorm:"column:longitude;not null"`
-	GPSTime   time.Time `json:"gps_time" gorm:"column:gps_time;not null;index:idx_gps_records_device_time,priority:2"`
-	CreatedAt time.Time `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
+	ID           uint64    `json:"id" gorm:"primaryKey"`
+	DeviceID     uint64    `json:"device_id" gorm:"column:device_id;not null;index:idx_gps_records_device_time,priority:1"`
+	Latitude     float64   `json:"latitude" gorm:"column:latitude;not null"`
+	Longitude    float64   `json:"longitude" gorm:"column:longitude;not null"`
+	GPSTime      time.Time `json:"gps_time" gorm:"column:gps_time;not null;index:idx_gps_records_device_time,priority:2"`
+	StillSeconds int       `json:"still_seconds" gorm:"column:still_seconds;not null;default:0"`
+	CreatedAt    time.Time `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
 }
 
 func (GPSRecord) TableName() string {
@@ -48,11 +52,13 @@ func (GPSRecord) TableName() string {
 }
 
 type Fence struct {
-	ID        uint64         `json:"id" gorm:"primaryKey"`
-	DeviceID  uint64         `json:"device_id" gorm:"column:device_id;not null;index"`
-	Name      string         `json:"name" gorm:"size:64;not null"`
-	Polygon   datatypes.JSON `json:"polygon" gorm:"column:polygon;not null"`
-	CreatedAt time.Time      `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
+	ID            uint64         `json:"id" gorm:"primaryKey"`
+	DeviceID      uint64         `json:"device_id" gorm:"column:device_id;not null;index"`
+	Name          string         `json:"name" gorm:"size:64;not null"`
+	Polygon       datatypes.JSON `json:"polygon" gorm:"column:polygon;not null"`
+	LastInside    *bool          `json:"last_inside" gorm:"column:last_inside"`
+	LastCheckedAt *time.Time     `json:"last_checked_at" gorm:"column:last_checked_at"`
+	CreatedAt     time.Time      `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
 }
 
 func (Fence) TableName() string {

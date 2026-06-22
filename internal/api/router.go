@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,11 +42,24 @@ type alarmService interface {
 	ListAlarms(ctx context.Context, query service.AlarmListQuery) (*service.AlarmListResult, error)
 }
 
+type fenceService interface {
+	ListFences(ctx context.Context, deviceSN string) ([]service.FenceSummary, error)
+	GetFence(ctx context.Context, deviceSN string, fenceID uint64) (*service.FenceSummary, error)
+	CreateFence(ctx context.Context, input service.FenceCreateInput) (*service.FenceSummary, error)
+	UpdateFence(ctx context.Context, deviceSN string, fenceID uint64, input service.FenceUpdateInput) (*service.FenceSummary, error)
+	DeleteFence(ctx context.Context, deviceSN string, fenceID uint64) error
+}
+
 type mqttPublishRequest struct {
 	Topic    string          `json:"topic" binding:"required"`
 	QoS      uint8           `json:"qos"`
 	Retained bool            `json:"retained"`
 	Payload  json.RawMessage `json:"payload" binding:"required"`
+}
+
+type deviceCommandRequest struct {
+	Command string         `json:"cmd" binding:"required"`
+	Params  map[string]any `json:"params"`
 }
 
 type deviceUpsertRequest struct {
@@ -61,7 +75,12 @@ type deviceCreateRequest struct {
 	deviceUpsertRequest
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService) *gin.Engine {
+type fenceUpsertRequest struct {
+	Name    string               `json:"name" binding:"required"`
+	Polygon []service.FencePoint `json:"polygon" binding:"required"`
+}
+
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService, fenceSvc fenceService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
@@ -276,6 +295,125 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, result)
 		})
 
+		apiGroup.GET("/devices/:device_sn/fences", func(c *gin.Context) {
+			if fenceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
+				return
+			}
+
+			fences, err := fenceSvc.ListFences(c.Request.Context(), c.Param("device_sn"))
+			if err != nil {
+				handleFenceServiceError(c, err)
+				return
+			}
+
+			ok(c, gin.H{
+				"fences": fences,
+			})
+		})
+
+		apiGroup.POST("/devices/:device_sn/fences", func(c *gin.Context) {
+			if fenceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
+				return
+			}
+
+			var req fenceUpsertRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid create fence request: "+err.Error())
+				return
+			}
+
+			fence, err := fenceSvc.CreateFence(c.Request.Context(), service.FenceCreateInput{
+				DeviceSN: c.Param("device_sn"),
+				Name:     req.Name,
+				Polygon:  req.Polygon,
+			})
+			if err != nil {
+				handleFenceServiceError(c, err)
+				return
+			}
+
+			c.JSON(http.StatusCreated, gin.H{
+				"success": true,
+				"data":    fence,
+			})
+		})
+
+		apiGroup.GET("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
+			if fenceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
+				return
+			}
+
+			fenceID, err := parseUint64Param(c.Param("fence_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid fence_id: "+err.Error())
+				return
+			}
+
+			fence, err := fenceSvc.GetFence(c.Request.Context(), c.Param("device_sn"), fenceID)
+			if err != nil {
+				handleFenceServiceError(c, err)
+				return
+			}
+
+			ok(c, fence)
+		})
+
+		apiGroup.PUT("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
+			if fenceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
+				return
+			}
+
+			fenceID, err := parseUint64Param(c.Param("fence_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid fence_id: "+err.Error())
+				return
+			}
+
+			var req fenceUpsertRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid update fence request: "+err.Error())
+				return
+			}
+
+			fence, err := fenceSvc.UpdateFence(c.Request.Context(), c.Param("device_sn"), fenceID, service.FenceUpdateInput{
+				Name:    req.Name,
+				Polygon: req.Polygon,
+			})
+			if err != nil {
+				handleFenceServiceError(c, err)
+				return
+			}
+
+			ok(c, fence)
+		})
+
+		apiGroup.DELETE("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
+			if fenceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
+				return
+			}
+
+			fenceID, err := parseUint64Param(c.Param("fence_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid fence_id: "+err.Error())
+				return
+			}
+
+			if err := fenceSvc.DeleteFence(c.Request.Context(), c.Param("device_sn"), fenceID); err != nil {
+				handleFenceServiceError(c, err)
+				return
+			}
+
+			ok(c, gin.H{
+				"deleted":  true,
+				"fence_id": fenceID,
+			})
+		})
+
 		apiGroup.GET("/mqtt/status", func(c *gin.Context) {
 			ok(c, gin.H{
 				"enabled":   mqttSvc.Enabled(),
@@ -288,6 +426,51 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			limit := parsePositiveInt(c.Query("limit"), 20, 100)
 			ok(c, gin.H{
 				"messages": mqttSvc.RecentMessages(limit),
+			})
+		})
+
+		apiGroup.POST("/devices/:device_sn/commands", func(c *gin.Context) {
+			var req deviceCommandRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid device command request: "+err.Error())
+				return
+			}
+
+			deviceSN := c.Param("device_sn")
+			command := strings.TrimSpace(req.Command)
+			if command == "" {
+				fail(c, http.StatusBadRequest, "cmd is required")
+				return
+			}
+
+			payload := map[string]any{
+				"cmd": command,
+			}
+			for key, value := range req.Params {
+				payload[key] = value
+			}
+
+			body, err := json.Marshal(payload)
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid command params")
+				return
+			}
+
+			topic := "locator/" + deviceSN + "/cmd"
+			if err := mqttSvc.Publish(c.Request.Context(), topic, body, 1, false); err != nil {
+				if errors.Is(err, mqttclient.ErrNotConnected) {
+					fail(c, http.StatusServiceUnavailable, err.Error())
+					return
+				}
+
+				fail(c, http.StatusBadGateway, err.Error())
+				return
+			}
+
+			ok(c, gin.H{
+				"topic":     topic,
+				"published": true,
+				"payload":   payload,
 			})
 		})
 
@@ -377,6 +560,15 @@ func handleAlarmServiceError(c *gin.Context, err error) {
 	}
 }
 
+func handleFenceServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrDeviceNotFound), errors.Is(err, service.ErrFenceNotFound):
+		fail(c, http.StatusNotFound, err.Error())
+	default:
+		fail(c, http.StatusBadRequest, err.Error())
+	}
+}
+
 func parsePositiveInt(raw string, defaultValue int, maxValue int) int {
 	if raw == "" {
 		return defaultValue
@@ -421,4 +613,13 @@ func parseOptionalTime(raw string) (*time.Time, error) {
 	}
 
 	return nil, errors.New("expected RFC3339 or 2006-01-02 15:04:05")
+}
+
+func parseUint64Param(raw string) (uint64, error) {
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return value, nil
 }

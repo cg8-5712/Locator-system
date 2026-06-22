@@ -227,10 +227,15 @@ CREATE TABLE alarms (
 
 ### Topic 规范
 
-- 定位数据：`device/{device_sn}/gps`
-- 状态数据：`device/{device_sn}/status`
-- 设备告警：`device/{device_sn}/alarm`
-- 服务器指令：`device/{device_sn}/cmd`
+- 兼容旧协议：
+  - 定位数据：`device/{device_sn}/gps`
+  - 状态数据：`device/{device_sn}/status`
+  - 设备告警：`device/{device_sn}/alarm`
+- 当前定位器协议：
+  - 定位数据：`locator/{device_sn}/location`
+  - 状态数据：`locator/{device_sn}/status`
+  - 配置数据：`locator/{device_sn}/config`
+  - 设备命令：`locator/{device_sn}/cmd`
 
 ### GPS 消息示例
 
@@ -245,12 +250,30 @@ CREATE TABLE alarms (
 }
 ```
 
+### 紧凑定位消息示例
+
+```text
+F:3956.20359N,11622.44467E,090353AA*4C
+S:600
+Z:0
+```
+
+语义说明：
+
+- `F:` 代表真实定位点，后端会新增一条轨迹记录
+- `S:` 代表静止保活，后端会更新上一条真实轨迹的 `still_seconds`
+- `Z:0` 代表设备在线但当前无定位，后端不会伪造坐标点
+
 ### 订阅主题
 
 ```text
 device/+/gps
 device/+/status
 device/+/alarm
+locator/+/location
+locator/+/status
+locator/+/config
+locator/+/test
 ```
 
 ### 消息处理流程
@@ -459,6 +482,12 @@ POST /api/auth/login
 - `PUT /api/devices/:device_sn`
 - `DELETE /api/devices/:device_sn`
 - `GET /api/devices/:device_sn/tracks`
+- `GET /api/devices/:device_sn/fences`
+- `POST /api/devices/:device_sn/fences`
+- `GET /api/devices/:device_sn/fences/:fence_id`
+- `PUT /api/devices/:device_sn/fences/:fence_id`
+- `DELETE /api/devices/:device_sn/fences/:fence_id`
+- `POST /api/devices/:device_sn/commands`
 - `GET /api/fences`
 - `POST /api/fences`
 - `GET /api/alarms`

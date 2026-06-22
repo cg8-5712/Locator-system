@@ -190,6 +190,101 @@ func TestMQTTMessageProcessorRejectsBindingSameIMEIToAnotherDevice(t *testing.T)
 	}
 }
 
+func TestMQTTMessageProcessorStoresCompactLocationAndStillKeepalive(t *testing.T) {
+	store := openTestStore(t)
+	defer closeTestStore(t, store)
+
+	processor := NewMQTTMessageProcessor(store.DB(), logger.New("error"))
+	receivedAt := time.Date(2026, 6, 22, 9, 3, 54, 0, time.UTC)
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("F:3956.20359N,11622.44467E,090353AA*4C"),
+		ReceivedAt: receivedAt,
+	}); err != nil {
+		t.Fatalf("compact full location HandleMessage() error = %v", err)
+	}
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("S:600"),
+		ReceivedAt: receivedAt.Add(10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("compact still HandleMessage() error = %v", err)
+	}
+
+	var device model.Device
+	if err := store.DB().Where("device_sn = ?", "locator-esp32s3-001").Take(&device).Error; err != nil {
+		t.Fatalf("load device error = %v", err)
+	}
+
+	if device.TopicPrefix != "locator" {
+		t.Fatalf("device.TopicPrefix = %q, want locator", device.TopicPrefix)
+	}
+
+	if device.GPSState != "located" {
+		t.Fatalf("device.GPSState = %q, want located", device.GPSState)
+	}
+
+	var record model.GPSRecord
+	if err := store.DB().Where("device_id = ?", device.ID).Take(&record).Error; err != nil {
+		t.Fatalf("load gps record error = %v", err)
+	}
+
+	if record.StillSeconds != 600 {
+		t.Fatalf("record.StillSeconds = %d, want 600", record.StillSeconds)
+	}
+}
+
+func TestMQTTMessageProcessorStoresNoFixKeepaliveAndStatusConfig(t *testing.T) {
+	store := openTestStore(t)
+	defer closeTestStore(t, store)
+
+	processor := NewMQTTMessageProcessor(store.DB(), logger.New("error"))
+	receivedAt := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/status",
+		Payload:    []byte(`{"build":"Jun 20 2026 10:32:11","startup":1,"health":1,"gps":"located","net":1,"mqtt":1,"creg":1,"imei":"868478081658261","iccid":"89860412102570034386","fw":"+VERSION=CT12_V1.0.5"}`),
+		ReceivedAt: receivedAt,
+	}); err != nil {
+		t.Fatalf("status HandleMessage() error = %v", err)
+	}
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/config",
+		Payload:    []byte(`{"pub_ms":30000,"gps_offline_ms":10000,"gps_unable_ms":30000,"move_m":30,"still_m":30,"still_confirm_ms":300000,"still_keepalive_ms":900000,"nofix_keepalive_ms":900000,"full_resync_ms":3600000,"health_ms":30000,"remote_cfg":1}`),
+		ReceivedAt: receivedAt.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("config HandleMessage() error = %v", err)
+	}
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("Z:0"),
+		ReceivedAt: receivedAt.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("no-fix HandleMessage() error = %v", err)
+	}
+
+	var device model.Device
+	if err := store.DB().Where("device_sn = ?", "locator-esp32s3-001").Take(&device).Error; err != nil {
+		t.Fatalf("load device error = %v", err)
+	}
+
+	if device.IMEI == nil || *device.IMEI != "868478081658261" {
+		t.Fatalf("device.IMEI = %v, want 868478081658261", device.IMEI)
+	}
+
+	if device.ICCID == nil || *device.ICCID != "89860412102570034386" {
+		t.Fatalf("device.ICCID = %v, want 89860412102570034386", device.ICCID)
+	}
+
+	if device.GPSState != "unable" {
+		t.Fatalf("device.GPSState = %q, want unable", device.GPSState)
+	}
+}
+
 func openTestStore(t *testing.T) *database.Store {
 	t.Helper()
 
