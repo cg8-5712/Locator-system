@@ -29,6 +29,10 @@ type databaseService interface {
 	PingContext(ctx context.Context) error
 }
 
+type websocketHandler interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}
+
 type deviceService interface {
 	ListDevices(ctx context.Context, query service.DeviceListQuery) (*service.DeviceListResult, error)
 	GetDevice(ctx context.Context, deviceSN string) (*service.DeviceSummary, error)
@@ -80,7 +84,7 @@ type fenceUpsertRequest struct {
 	Polygon []service.FencePoint `json:"polygon" binding:"required"`
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService, fenceSvc fenceService) *gin.Engine {
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService, fenceSvc fenceService, authSvc authService, wsHandler websocketHandler) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
@@ -107,9 +111,57 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 		})
 	})
 
+	router.GET("/ws", func(c *gin.Context) {
+		if wsHandler == nil {
+			fail(c, http.StatusServiceUnavailable, "websocket is unavailable")
+			return
+		}
+
+		if !authorizeWebSocket(c, authSvc) {
+			return
+		}
+
+		wsHandler.ServeHTTP(c.Writer, c.Request)
+	})
+
 	apiGroup := router.Group("/api")
 	{
-		apiGroup.GET("/devices", func(c *gin.Context) {
+		apiGroup.POST("/auth/login", func(c *gin.Context) {
+			if authSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "auth service is unavailable")
+				return
+			}
+
+			var req loginRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid login request: "+err.Error())
+				return
+			}
+
+			result, err := authSvc.Login(c.Request.Context(), service.LoginInput{
+				Username: req.Username,
+				Password: req.Password,
+			})
+			if err != nil {
+				switch {
+				case errors.Is(err, service.ErrInvalidCredentials):
+					fail(c, http.StatusUnauthorized, err.Error())
+				case errors.Is(err, service.ErrAuthDisabled):
+					fail(c, http.StatusServiceUnavailable, err.Error())
+				default:
+					fail(c, http.StatusInternalServerError, err.Error())
+				}
+				return
+			}
+
+			ok(c, result)
+		})
+	}
+
+	protectedGroup := apiGroup.Group("")
+	protectedGroup.Use(requireAuth(authSvc))
+	{
+		protectedGroup.GET("/devices", func(c *gin.Context) {
 			if deviceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
 				return
@@ -138,38 +190,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, result)
 		})
 
-		apiGroup.POST("/devices", func(c *gin.Context) {
-			if deviceSvc == nil {
-				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
-				return
-			}
-
-			var req deviceCreateRequest
-			if err := c.ShouldBindJSON(&req); err != nil {
-				fail(c, http.StatusBadRequest, "invalid create device request: "+err.Error())
-				return
-			}
-
-			device, err := deviceSvc.CreateDevice(c.Request.Context(), service.DeviceCreateInput{
-				DeviceSN: req.DeviceSN,
-				IMEI:     req.IMEI,
-				ICCID:    req.ICCID,
-				Name:     req.Name,
-				Status:   req.Status,
-				Battery:  req.Battery,
-			})
-			if err != nil {
-				handleDeviceServiceError(c, err)
-				return
-			}
-
-			c.JSON(http.StatusCreated, gin.H{
-				"success": true,
-				"data":    device,
-			})
-		})
-
-		apiGroup.GET("/devices/:device_sn", func(c *gin.Context) {
+		protectedGroup.GET("/devices/:device_sn", func(c *gin.Context) {
 			if deviceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
 				return
@@ -184,34 +205,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, device)
 		})
 
-		apiGroup.PUT("/devices/:device_sn", func(c *gin.Context) {
-			if deviceSvc == nil {
-				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
-				return
-			}
-
-			var req deviceUpsertRequest
-			if err := c.ShouldBindJSON(&req); err != nil {
-				fail(c, http.StatusBadRequest, "invalid update device request: "+err.Error())
-				return
-			}
-
-			device, err := deviceSvc.UpdateDevice(c.Request.Context(), c.Param("device_sn"), service.DeviceUpdateInput{
-				IMEI:    req.IMEI,
-				ICCID:   req.ICCID,
-				Name:    req.Name,
-				Status:  req.Status,
-				Battery: req.Battery,
-			})
-			if err != nil {
-				handleDeviceServiceError(c, err)
-				return
-			}
-
-			ok(c, device)
-		})
-
-		apiGroup.GET("/devices/:device_sn/tracks", func(c *gin.Context) {
+		protectedGroup.GET("/devices/:device_sn/tracks", func(c *gin.Context) {
 			if deviceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
 				return
@@ -243,25 +237,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, result)
 		})
 
-		apiGroup.DELETE("/devices/:device_sn", func(c *gin.Context) {
-			if deviceSvc == nil {
-				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
-				return
-			}
-
-			deviceSN := c.Param("device_sn")
-			if err := deviceSvc.DeleteDevice(c.Request.Context(), deviceSN); err != nil {
-				handleDeviceServiceError(c, err)
-				return
-			}
-
-			ok(c, gin.H{
-				"deleted":   true,
-				"device_sn": deviceSN,
-			})
-		})
-
-		apiGroup.GET("/alarms", func(c *gin.Context) {
+		protectedGroup.GET("/alarms", func(c *gin.Context) {
 			if alarmSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "alarm service is unavailable")
 				return
@@ -295,7 +271,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, result)
 		})
 
-		apiGroup.GET("/devices/:device_sn/fences", func(c *gin.Context) {
+		protectedGroup.GET("/devices/:device_sn/fences", func(c *gin.Context) {
 			if fenceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
 				return
@@ -312,7 +288,123 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			})
 		})
 
-		apiGroup.POST("/devices/:device_sn/fences", func(c *gin.Context) {
+		protectedGroup.GET("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
+			if fenceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
+				return
+			}
+
+			fenceID, err := parseUint64Param(c.Param("fence_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid fence_id: "+err.Error())
+				return
+			}
+
+			fence, err := fenceSvc.GetFence(c.Request.Context(), c.Param("device_sn"), fenceID)
+			if err != nil {
+				handleFenceServiceError(c, err)
+				return
+			}
+
+			ok(c, fence)
+		})
+
+		protectedGroup.GET("/mqtt/status", func(c *gin.Context) {
+			ok(c, gin.H{
+				"enabled":   mqttSvc.Enabled(),
+				"connected": mqttSvc.Connected(),
+				"topics":    mqttSvc.Topics(),
+			})
+		})
+
+		protectedGroup.GET("/mqtt/messages", func(c *gin.Context) {
+			limit := parsePositiveInt(c.Query("limit"), 20, 100)
+			ok(c, gin.H{
+				"messages": mqttSvc.RecentMessages(limit),
+			})
+		})
+	}
+
+	adminGroup := protectedGroup.Group("")
+	adminGroup.Use(requireRole(authSvc, "admin"))
+	{
+		adminGroup.POST("/devices", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			var req deviceCreateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid create device request: "+err.Error())
+				return
+			}
+
+			device, err := deviceSvc.CreateDevice(c.Request.Context(), service.DeviceCreateInput{
+				DeviceSN: req.DeviceSN,
+				IMEI:     req.IMEI,
+				ICCID:    req.ICCID,
+				Name:     req.Name,
+				Status:   req.Status,
+				Battery:  req.Battery,
+			})
+			if err != nil {
+				handleDeviceServiceError(c, err)
+				return
+			}
+
+			c.JSON(http.StatusCreated, gin.H{
+				"success": true,
+				"data":    device,
+			})
+		})
+
+		adminGroup.PUT("/devices/:device_sn", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			var req deviceUpsertRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid update device request: "+err.Error())
+				return
+			}
+
+			device, err := deviceSvc.UpdateDevice(c.Request.Context(), c.Param("device_sn"), service.DeviceUpdateInput{
+				IMEI:    req.IMEI,
+				ICCID:   req.ICCID,
+				Name:    req.Name,
+				Status:  req.Status,
+				Battery: req.Battery,
+			})
+			if err != nil {
+				handleDeviceServiceError(c, err)
+				return
+			}
+
+			ok(c, device)
+		})
+
+		adminGroup.DELETE("/devices/:device_sn", func(c *gin.Context) {
+			if deviceSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
+				return
+			}
+
+			deviceSN := c.Param("device_sn")
+			if err := deviceSvc.DeleteDevice(c.Request.Context(), deviceSN); err != nil {
+				handleDeviceServiceError(c, err)
+				return
+			}
+
+			ok(c, gin.H{
+				"deleted":   true,
+				"device_sn": deviceSN,
+			})
+		})
+
+		adminGroup.POST("/devices/:device_sn/fences", func(c *gin.Context) {
 			if fenceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
 				return
@@ -340,28 +432,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			})
 		})
 
-		apiGroup.GET("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
-			if fenceSvc == nil {
-				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
-				return
-			}
-
-			fenceID, err := parseUint64Param(c.Param("fence_id"))
-			if err != nil {
-				fail(c, http.StatusBadRequest, "invalid fence_id: "+err.Error())
-				return
-			}
-
-			fence, err := fenceSvc.GetFence(c.Request.Context(), c.Param("device_sn"), fenceID)
-			if err != nil {
-				handleFenceServiceError(c, err)
-				return
-			}
-
-			ok(c, fence)
-		})
-
-		apiGroup.PUT("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
+		adminGroup.PUT("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
 			if fenceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
 				return
@@ -391,7 +462,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, fence)
 		})
 
-		apiGroup.DELETE("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
+		adminGroup.DELETE("/devices/:device_sn/fences/:fence_id", func(c *gin.Context) {
 			if fenceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "fence service is unavailable")
 				return
@@ -414,22 +485,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			})
 		})
 
-		apiGroup.GET("/mqtt/status", func(c *gin.Context) {
-			ok(c, gin.H{
-				"enabled":   mqttSvc.Enabled(),
-				"connected": mqttSvc.Connected(),
-				"topics":    mqttSvc.Topics(),
-			})
-		})
-
-		apiGroup.GET("/mqtt/messages", func(c *gin.Context) {
-			limit := parsePositiveInt(c.Query("limit"), 20, 100)
-			ok(c, gin.H{
-				"messages": mqttSvc.RecentMessages(limit),
-			})
-		})
-
-		apiGroup.POST("/devices/:device_sn/commands", func(c *gin.Context) {
+		adminGroup.POST("/devices/:device_sn/commands", func(c *gin.Context) {
 			var req deviceCommandRequest
 			if err := c.ShouldBindJSON(&req); err != nil {
 				fail(c, http.StatusBadRequest, "invalid device command request: "+err.Error())
@@ -474,7 +530,7 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			})
 		})
 
-		apiGroup.POST("/debug/mqtt/publish", func(c *gin.Context) {
+		adminGroup.POST("/debug/mqtt/publish", func(c *gin.Context) {
 			var req mqttPublishRequest
 			if err := c.ShouldBindJSON(&req); err != nil {
 				fail(c, http.StatusBadRequest, "invalid publish request: "+err.Error())

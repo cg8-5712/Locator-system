@@ -38,8 +38,10 @@ const (
 )
 
 type MQTTMessageProcessor struct {
-	db     *gorm.DB
-	logger *slog.Logger
+	db         *gorm.DB
+	logger     *slog.Logger
+	realtime   RealtimePublisher
+	alarmRules *AlarmRuleService
 }
 
 type deviceTopic struct {
@@ -65,6 +67,14 @@ func NewMQTTMessageProcessor(db *gorm.DB, logger *slog.Logger) *MQTTMessageProce
 		db:     db,
 		logger: logger,
 	}
+}
+
+func (p *MQTTMessageProcessor) SetRealtimePublisher(publisher RealtimePublisher) {
+	p.realtime = publisher
+}
+
+func (p *MQTTMessageProcessor) SetAlarmRuleService(alarmRules *AlarmRuleService) {
+	p.alarmRules = alarmRules
 }
 
 func (p *MQTTMessageProcessor) HandleMessage(ctx context.Context, message mqtt.ReceivedMessage) error {
@@ -136,7 +146,13 @@ func (p *MQTTMessageProcessor) handleLegacyGPS(ctx context.Context, topic device
 
 	gpsTime := lookupTimestamp(payload, message.ReceivedAt, "timestamp", "gps_time", "time")
 
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var (
+		locationEvent *LocationEvent
+		statusEvent   *DeviceStatusEvent
+		alarmEvents   []AlarmEvent
+	)
+
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
@@ -161,12 +177,38 @@ func (p *MQTTMessageProcessor) handleLegacyGPS(ctx context.Context, topic device
 			return err
 		}
 
-		if err := processFenceTransitions(tx, device.ID, topic.DeviceSN, latitude, longitude, gpsTime.UTC()); err != nil {
+		updatedDevice, err := loadDeviceByID(tx, device.ID)
+		if err != nil {
 			return err
+		}
+
+		alarmEvents, err = processFenceTransitions(ctx, tx, p.alarmRules, device.ID, topic.DeviceSN, latitude, longitude, gpsTime.UTC())
+		if err != nil {
+			return err
+		}
+
+		statusEvent = buildDeviceStatusEvent(*updatedDevice)
+		locationEvent = &LocationEvent{
+			DeviceSN:     topic.DeviceSN,
+			TopicPrefix:  updatedDevice.TopicPrefix,
+			Latitude:     latitude,
+			Longitude:    longitude,
+			Time:         gpsTime.UTC(),
+			StillSeconds: 0,
+			GPSState:     updatedDevice.GPSState,
+			Status:       updatedDevice.Status,
 		}
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	p.publishDeviceStatusEvent(statusEvent)
+	p.publishLocationEvent(locationEvent)
+	p.publishAlarmEvents(alarmEvents)
+	return nil
 }
 
 func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic deviceTopic, message mqtt.ReceivedMessage) error {
@@ -175,7 +217,13 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 		return errors.New("location payload is empty")
 	}
 
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var (
+		locationEvent *LocationEvent
+		statusEvent   *DeviceStatusEvent
+		alarmEvents   []AlarmEvent
+	)
+
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
@@ -212,8 +260,26 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 				return err
 			}
 
-			if err := processFenceTransitions(tx, device.ID, topic.DeviceSN, location.Latitude, location.Longitude, location.GPSTime.UTC()); err != nil {
+			updatedDevice, err := loadDeviceByID(tx, device.ID)
+			if err != nil {
 				return err
+			}
+
+			alarmEvents, err = processFenceTransitions(ctx, tx, p.alarmRules, device.ID, topic.DeviceSN, location.Latitude, location.Longitude, location.GPSTime.UTC())
+			if err != nil {
+				return err
+			}
+
+			statusEvent = buildDeviceStatusEvent(*updatedDevice)
+			locationEvent = &LocationEvent{
+				DeviceSN:     topic.DeviceSN,
+				TopicPrefix:  updatedDevice.TopicPrefix,
+				Latitude:     location.Latitude,
+				Longitude:    location.Longitude,
+				Time:         location.GPSTime.UTC(),
+				StillSeconds: 0,
+				GPSState:     updatedDevice.GPSState,
+				Status:       updatedDevice.Status,
 			}
 
 			return nil
@@ -224,27 +290,70 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 				return parseErr
 			}
 
-			if err := extendLastStationaryRecord(tx, device.ID, stillSeconds); err != nil {
+			record, err := extendLastStationaryRecord(tx, device.ID, stillSeconds)
+			if err != nil {
 				return err
 			}
 
 			updates["gps_state"] = "located"
 			updates["status"] = statusOnline
-			return updateDevice(tx, device.ID, updates)
+			if err := updateDevice(tx, device.ID, updates); err != nil {
+				return err
+			}
+
+			updatedDevice, err := loadDeviceByID(tx, device.ID)
+			if err != nil {
+				return err
+			}
+
+			statusEvent = buildDeviceStatusEvent(*updatedDevice)
+			if record != nil {
+				locationEvent = &LocationEvent{
+					DeviceSN:     topic.DeviceSN,
+					TopicPrefix:  updatedDevice.TopicPrefix,
+					Latitude:     record.Latitude,
+					Longitude:    record.Longitude,
+					Time:         record.GPSTime.UTC(),
+					StillSeconds: stillSeconds,
+					GPSState:     updatedDevice.GPSState,
+					Status:       updatedDevice.Status,
+				}
+			}
+			return nil
 
 		case raw == "Z:0":
 			updates["gps_state"] = "unable"
 			updates["status"] = statusOnline
-			return updateDevice(tx, device.ID, updates)
+			if err := updateDevice(tx, device.ID, updates); err != nil {
+				return err
+			}
+
+			updatedDevice, err := loadDeviceByID(tx, device.ID)
+			if err != nil {
+				return err
+			}
+
+			statusEvent = buildDeviceStatusEvent(*updatedDevice)
+			return nil
 
 		default:
 			return fmt.Errorf("unsupported compact location payload %q", raw)
 		}
 	})
+	if err != nil {
+		return err
+	}
+
+	p.publishDeviceStatusEvent(statusEvent)
+	p.publishLocationEvent(locationEvent)
+	p.publishAlarmEvents(alarmEvents)
+	return nil
 }
 
 func (p *MQTTMessageProcessor) handleStatus(ctx context.Context, topic deviceTopic, payload map[string]any, message mqtt.ReceivedMessage) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var statusEvent *DeviceStatusEvent
+
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
@@ -261,12 +370,33 @@ func (p *MQTTMessageProcessor) handleStatus(ctx context.Context, topic deviceTop
 			}
 		}
 
-		return updateDevice(tx, device.ID, updates)
+		if err := updateDevice(tx, device.ID, updates); err != nil {
+			return err
+		}
+
+		updatedDevice, err := loadDeviceByID(tx, device.ID)
+		if err != nil {
+			return err
+		}
+
+		statusEvent = buildDeviceStatusEvent(*updatedDevice)
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	p.publishDeviceStatusEvent(statusEvent)
+	return nil
 }
 
 func (p *MQTTMessageProcessor) handleAlarm(ctx context.Context, topic deviceTopic, payload map[string]any, message mqtt.ReceivedMessage) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var (
+		statusEvent *DeviceStatusEvent
+		alarmEvents []AlarmEvent
+	)
+
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
@@ -283,23 +413,40 @@ func (p *MQTTMessageProcessor) handleAlarm(ctx context.Context, topic deviceTopi
 		}
 
 		alarmTime := lookupTimestamp(payload, message.ReceivedAt, "timestamp", "time")
-		alarm := model.Alarm{
-			DeviceID:  device.ID,
-			Type:      alarmType,
-			Content:   content,
-			CreatedAt: alarmTime.UTC(),
+		alarm, created, err := p.createDeviceAlarm(ctx, tx, device.ID, topic.DeviceSN, alarmType, content, alarmTime.UTC())
+		if err != nil {
+			return err
 		}
 
-		if err := tx.Create(&alarm).Error; err != nil {
-			return fmt.Errorf("create alarm record: %w", err)
+		if err := updateDevice(tx, device.ID, buildDeviceUpdates(payload, topic, message.ReceivedAt)); err != nil {
+			return err
 		}
 
-		return updateDevice(tx, device.ID, buildDeviceUpdates(payload, topic, message.ReceivedAt))
+		updatedDevice, err := loadDeviceByID(tx, device.ID)
+		if err != nil {
+			return err
+		}
+
+		statusEvent = buildDeviceStatusEvent(*updatedDevice)
+		if created {
+			alarmEvents = append(alarmEvents, buildAlarmEvent(topic.DeviceSN, *alarm))
+		}
+
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	p.publishDeviceStatusEvent(statusEvent)
+	p.publishAlarmEvents(alarmEvents)
+	return nil
 }
 
 func (p *MQTTMessageProcessor) handleConfig(ctx context.Context, topic deviceTopic, payload map[string]any, message mqtt.ReceivedMessage) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var statusEvent *DeviceStatusEvent
+
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
@@ -307,23 +454,57 @@ func (p *MQTTMessageProcessor) handleConfig(ctx context.Context, topic deviceTop
 
 		updates := buildDeviceUpdates(payload, topic, message.ReceivedAt)
 		updates["status"] = statusOnline
-		return updateDevice(tx, device.ID, updates)
+		if err := updateDevice(tx, device.ID, updates); err != nil {
+			return err
+		}
+
+		updatedDevice, err := loadDeviceByID(tx, device.ID)
+		if err != nil {
+			return err
+		}
+
+		statusEvent = buildDeviceStatusEvent(*updatedDevice)
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	p.publishDeviceStatusEvent(statusEvent)
+	return nil
 }
 
 func (p *MQTTMessageProcessor) handleTest(ctx context.Context, topic deviceTopic, message mqtt.ReceivedMessage) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var statusEvent *DeviceStatusEvent
+
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
 		}
 
-		return updateDevice(tx, device.ID, map[string]any{
+		if err := updateDevice(tx, device.ID, map[string]any{
 			"last_online":  message.ReceivedAt.UTC(),
 			"topic_prefix": topic.Prefix,
 			"status":       statusOnline,
-		})
+		}); err != nil {
+			return err
+		}
+
+		updatedDevice, err := loadDeviceByID(tx, device.ID)
+		if err != nil {
+			return err
+		}
+
+		statusEvent = buildDeviceStatusEvent(*updatedDevice)
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	p.publishDeviceStatusEvent(statusEvent)
+	return nil
 }
 
 func parseDeviceTopic(topic string) (deviceTopic, error) {
@@ -509,7 +690,7 @@ func parseStillSeconds(raw string) (int, error) {
 	return seconds, nil
 }
 
-func extendLastStationaryRecord(tx *gorm.DB, deviceID uint64, stillSeconds int) error {
+func extendLastStationaryRecord(tx *gorm.DB, deviceID uint64, stillSeconds int) (*model.GPSRecord, error) {
 	var record model.GPSRecord
 	if err := tx.
 		Where("device_id = ?", deviceID).
@@ -517,19 +698,20 @@ func extendLastStationaryRecord(tx *gorm.DB, deviceID uint64, stillSeconds int) 
 		Order("id DESC").
 		Take(&record).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
+			return nil, nil
 		}
 
-		return fmt.Errorf("load last gps record for device %d: %w", deviceID, err)
+		return nil, fmt.Errorf("load last gps record for device %d: %w", deviceID, err)
 	}
 
 	if err := tx.Model(&model.GPSRecord{}).
 		Where("id = ?", record.ID).
 		Update("still_seconds", stillSeconds).Error; err != nil {
-		return fmt.Errorf("update still_seconds for record %d: %w", record.ID, err)
+		return nil, fmt.Errorf("update still_seconds for record %d: %w", record.ID, err)
 	}
 
-	return nil
+	record.StillSeconds = stillSeconds
+	return &record, nil
 }
 
 func findOrCreateDevice(tx *gorm.DB, topic deviceTopic) (*model.Device, error) {
@@ -609,16 +791,17 @@ func buildDeviceUpdates(payload map[string]any, topic deviceTopic, receivedAt ti
 	return updates
 }
 
-func processFenceTransitions(tx *gorm.DB, deviceID uint64, deviceSN string, latitude float64, longitude float64, checkedAt time.Time) error {
+func processFenceTransitions(ctx context.Context, tx *gorm.DB, alarmRules *AlarmRuleService, deviceID uint64, deviceSN string, latitude float64, longitude float64, checkedAt time.Time) ([]AlarmEvent, error) {
 	var fences []model.Fence
 	if err := tx.Where("device_id = ?", deviceID).Find(&fences).Error; err != nil {
-		return fmt.Errorf("list fences for device %s: %w", deviceSN, err)
+		return nil, fmt.Errorf("list fences for device %s: %w", deviceSN, err)
 	}
 
+	events := make([]AlarmEvent, 0)
 	for _, fence := range fences {
 		polygon, err := decodeFencePolygon(fence.Polygon)
 		if err != nil {
-			return fmt.Errorf("decode fence %d polygon: %w", fence.ID, err)
+			return nil, fmt.Errorf("decode fence %d polygon: %w", fence.ID, err)
 		}
 
 		inside := geo.ContainsPoint(latitude, longitude, polygon)
@@ -628,7 +811,7 @@ func processFenceTransitions(tx *gorm.DB, deviceID uint64, deviceSN string, lati
 				"last_inside":     inside,
 				"last_checked_at": checkedAt.UTC(),
 			}).Error; err != nil {
-			return fmt.Errorf("update fence %d state: %w", fence.ID, err)
+			return nil, fmt.Errorf("update fence %d state: %w", fence.ID, err)
 		}
 
 		if fence.LastInside != nil && *fence.LastInside == inside {
@@ -637,19 +820,112 @@ func processFenceTransitions(tx *gorm.DB, deviceID uint64, deviceSN string, lati
 
 		if fence.LastInside != nil && *fence.LastInside && !inside {
 			content := fmt.Sprintf("device %s left fence %s", deviceSN, fence.Name)
-			alarm := model.Alarm{
-				DeviceID:  deviceID,
-				Type:      "out_of_fence",
-				Content:   content,
-				CreatedAt: checkedAt.UTC(),
+			var (
+				alarm   *model.Alarm
+				created bool
+			)
+			if alarmRules != nil {
+				alarm, created, err = alarmRules.CreateDeviceAlarm(ctx, tx, deviceID, deviceSN, "out_of_fence", content, checkedAt.UTC())
+			} else {
+				alarm = &model.Alarm{
+					DeviceID:  deviceID,
+					Type:      "out_of_fence",
+					Content:   content,
+					CreatedAt: checkedAt.UTC(),
+				}
+				if err = tx.Create(alarm).Error; err == nil {
+					created = true
+				}
 			}
-			if err := tx.Create(&alarm).Error; err != nil {
-				return fmt.Errorf("create out_of_fence alarm: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("create out_of_fence alarm: %w", err)
+			}
+			if created {
+				events = append(events, buildAlarmEvent(deviceSN, *alarm))
 			}
 		}
 	}
 
-	return nil
+	return events, nil
+}
+
+func (p *MQTTMessageProcessor) createDeviceAlarm(ctx context.Context, tx *gorm.DB, deviceID uint64, deviceSN string, alarmType string, content string, createdAt time.Time) (*model.Alarm, bool, error) {
+	if p.alarmRules != nil {
+		return p.alarmRules.CreateDeviceAlarm(ctx, tx, deviceID, deviceSN, alarmType, content, createdAt)
+	}
+
+	alarm := &model.Alarm{
+		DeviceID:  deviceID,
+		Type:      strings.TrimSpace(alarmType),
+		Content:   strings.TrimSpace(content),
+		CreatedAt: createdAt.UTC(),
+	}
+	if alarm.Content == "" {
+		alarm.Content = alarm.Type
+	}
+	if err := tx.Create(alarm).Error; err != nil {
+		return nil, false, fmt.Errorf("create alarm: %w", err)
+	}
+
+	return alarm, true, nil
+}
+
+func (p *MQTTMessageProcessor) publishLocationEvent(event *LocationEvent) {
+	if p.realtime == nil || event == nil {
+		return
+	}
+
+	p.realtime.PublishLocation(*event)
+}
+
+func (p *MQTTMessageProcessor) publishDeviceStatusEvent(event *DeviceStatusEvent) {
+	if p.realtime == nil || event == nil {
+		return
+	}
+
+	p.realtime.PublishDeviceStatus(*event)
+}
+
+func (p *MQTTMessageProcessor) publishAlarmEvents(events []AlarmEvent) {
+	if p.realtime == nil {
+		return
+	}
+
+	for _, event := range events {
+		p.realtime.PublishAlarm(event)
+	}
+}
+
+func loadDeviceByID(tx *gorm.DB, deviceID uint64) (*model.Device, error) {
+	var device model.Device
+	if err := tx.Where("id = ?", deviceID).Take(&device).Error; err != nil {
+		return nil, fmt.Errorf("load device %d: %w", deviceID, err)
+	}
+
+	return &device, nil
+}
+
+func buildDeviceStatusEvent(device model.Device) *DeviceStatusEvent {
+	return &DeviceStatusEvent{
+		DeviceSN:    device.DeviceSN,
+		TopicPrefix: device.TopicPrefix,
+		Status:      device.Status,
+		GPSState:    device.GPSState,
+		Battery:     device.Battery,
+		IMEI:        stringValue(device.IMEI),
+		ICCID:       stringValue(device.ICCID),
+		LastOnline:  device.LastOnline,
+		LastFixAt:   device.LastFixAt,
+	}
+}
+
+func buildAlarmEvent(deviceSN string, alarm model.Alarm) AlarmEvent {
+	return AlarmEvent{
+		DeviceSN:  deviceSN,
+		Type:      alarm.Type,
+		Content:   alarm.Content,
+		CreatedAt: alarm.CreatedAt,
+	}
 }
 
 func decodeFencePolygon(raw datatypes.JSON) ([][]float64, error) {

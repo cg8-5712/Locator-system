@@ -17,6 +17,9 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	HTTP            HTTPConfig
 	Database        DatabaseConfig
+	Auth            AuthConfig
+	Alarm           AlarmConfig
+	Offline         OfflineConfig
 	MQTT            MQTTConfig
 }
 
@@ -46,6 +49,23 @@ type MQTTConfig struct {
 	OperationTimeout time.Duration
 }
 
+type AuthConfig struct {
+	Enabled                bool
+	JWTSecret              string
+	TokenTTL               time.Duration
+	BootstrapAdminUsername string
+	BootstrapAdminPassword string
+}
+
+type OfflineConfig struct {
+	CheckInterval time.Duration
+	OfflineAfter  time.Duration
+}
+
+type AlarmConfig struct {
+	DedupeWindow time.Duration
+}
+
 func Load() Config {
 	loadEnvFiles(".env", ".env.local")
 
@@ -66,6 +86,20 @@ func Load() Config {
 			MaxOpenConns:    getIntEnv("DB_MAX_OPEN_CONNS", 20),
 			ConnMaxIdleTime: getDurationEnv("DB_CONN_MAX_IDLE_TIME", 5*time.Minute),
 			ConnMaxLifetime: getDurationEnv("DB_CONN_MAX_LIFETIME", 30*time.Minute),
+		},
+		Auth: AuthConfig{
+			Enabled:                getBoolEnv("AUTH_ENABLED", true),
+			JWTSecret:              getEnv("AUTH_JWT_SECRET", "change-me"),
+			TokenTTL:               getDurationEnv("AUTH_TOKEN_TTL", 24*time.Hour),
+			BootstrapAdminUsername: getEnv("AUTH_BOOTSTRAP_ADMIN_USERNAME", "admin"),
+			BootstrapAdminPassword: getEnv("AUTH_BOOTSTRAP_ADMIN_PASSWORD", "admin123456"),
+		},
+		Alarm: AlarmConfig{
+			DedupeWindow: getDurationEnv("ALARM_DEDUPE_WINDOW", 5*time.Minute),
+		},
+		Offline: OfflineConfig{
+			CheckInterval: getDurationEnv("OFFLINE_CHECK_INTERVAL", time.Minute),
+			OfflineAfter:  getDurationEnv("OFFLINE_AFTER", 5*time.Minute),
 		},
 		MQTT: MQTTConfig{
 			Enabled:  getBoolEnv("MQTT_ENABLED", false),

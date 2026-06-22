@@ -86,6 +86,49 @@ func (r *DeviceRepository) GetByDeviceSN(ctx context.Context, deviceSN string) (
 	return &device, nil
 }
 
+func (r *DeviceRepository) ListOfflineCandidates(ctx context.Context, offlineBefore time.Time) ([]model.Device, error) {
+	var devices []model.Device
+	if err := r.db.WithContext(ctx).
+		Where("last_online IS NOT NULL").
+		Where("last_online < ?", offlineBefore.UTC()).
+		Where("status <> ?", 0).
+		Order("last_online ASC").
+		Find(&devices).Error; err != nil {
+		return nil, fmt.Errorf("list offline candidates: %w", err)
+	}
+
+	return devices, nil
+}
+
+func (r *DeviceRepository) UpdateStatusByID(ctx context.Context, deviceID uint64, status int) error {
+	if err := r.db.WithContext(ctx).
+		Model(&model.Device{}).
+		Where("id = ?", deviceID).
+		Update("status", status).Error; err != nil {
+		return fmt.Errorf("update device %d status: %w", deviceID, err)
+	}
+
+	return nil
+}
+
+func (r *DeviceRepository) MarkOfflineIfStale(ctx context.Context, deviceID uint64, offlineBefore time.Time) (bool, error) {
+	result := r.db.WithContext(ctx).
+		Model(&model.Device{}).
+		Where("id = ?", deviceID).
+		Where("status <> ?", 0).
+		Where("last_online IS NOT NULL").
+		Where("last_online < ?", offlineBefore.UTC()).
+		Updates(map[string]any{
+			"status":    0,
+			"gps_state": "offline",
+		})
+	if result.Error != nil {
+		return false, fmt.Errorf("mark device %d offline: %w", deviceID, result.Error)
+	}
+
+	return result.RowsAffected > 0, nil
+}
+
 func (r *DeviceRepository) Create(ctx context.Context, device *model.Device) error {
 	if err := r.db.WithContext(ctx).Create(device).Error; err != nil {
 		return translateWriteError(err)

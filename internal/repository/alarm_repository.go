@@ -2,11 +2,14 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+
+	"locator/internal/model"
 )
 
 type AlarmListFilter struct {
@@ -31,6 +34,31 @@ type AlarmRepository struct {
 
 func NewAlarmRepository(db *gorm.DB) *AlarmRepository {
 	return &AlarmRepository{db: db}
+}
+
+func (r *AlarmRepository) Create(ctx context.Context, alarm *model.Alarm) error {
+	if err := r.db.WithContext(ctx).Create(alarm).Error; err != nil {
+		return fmt.Errorf("create alarm: %w", err)
+	}
+
+	return nil
+}
+
+func (r *AlarmRepository) LatestByDeviceAndType(ctx context.Context, deviceID uint64, alarmType string) (*model.Alarm, error) {
+	var alarm model.Alarm
+	if err := r.db.WithContext(ctx).
+		Where("device_id = ? AND type = ?", deviceID, strings.TrimSpace(alarmType)).
+		Order("created_at DESC").
+		Order("id DESC").
+		Take(&alarm).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("get latest alarm for device %d type %s: %w", deviceID, alarmType, err)
+	}
+
+	return &alarm, nil
 }
 
 func (r *AlarmRepository) List(ctx context.Context, filter AlarmListFilter) ([]AlarmRow, int64, error) {

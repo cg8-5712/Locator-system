@@ -17,6 +17,7 @@ import (
 	mqttclient "locator/internal/mqtt"
 	"locator/internal/repository"
 	"locator/internal/service"
+	ws "locator/internal/websocket"
 	"locator/pkg/logger"
 )
 
@@ -50,15 +51,43 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	alarmSvc := service.NewAlarmService(alarmRepo)
 	fenceRepo := repository.NewFenceRepository(dbStore.DB())
 	fenceSvc := service.NewFenceService(deviceRepo, fenceRepo)
+	userRepo := repository.NewUserRepository(dbStore.DB())
+	authSvc := service.NewAuthService(userRepo, service.AuthConfig{
+		Enabled:                cfg.Auth.Enabled,
+		JWTSecret:              cfg.Auth.JWTSecret,
+		TokenTTL:               cfg.Auth.TokenTTL,
+		BootstrapAdminUsername: cfg.Auth.BootstrapAdminUsername,
+		BootstrapAdminPassword: cfg.Auth.BootstrapAdminPassword,
+	})
+	if err := authSvc.EnsureBootstrapAdmin(rootCtx); err != nil {
+		return fmt.Errorf("ensure bootstrap admin: %w", err)
+	}
+
+	wsHub := ws.NewHub(appLogger)
+	defer func() {
+		if err := wsHub.Shutdown(context.Background()); err != nil {
+			appLogger.Error("shutdown websocket hub", "error", err)
+		}
+	}()
+
+	alarmRules := service.NewAlarmRuleService(dbStore.DB(), cfg.Alarm.DedupeWindow)
 
 	mqttProcessor := service.NewMQTTMessageProcessor(dbStore.DB(), appLogger)
+	mqttProcessor.SetRealtimePublisher(wsHub)
+	mqttProcessor.SetAlarmRuleService(alarmRules)
 	mqttSvc := mqttclient.New(cfg.MQTT, appLogger, mqttProcessor)
 	if err := mqttSvc.Start(rootCtx); err != nil {
 		return fmt.Errorf("start mqtt service: %w", err)
 	}
 	defer mqttSvc.Close()
 
-	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceSvc, alarmSvc, fenceSvc)
+	offlineMonitor := service.NewOfflineMonitor(dbStore.DB(), deviceRepo, alarmRules, wsHub, appLogger, service.OfflineMonitorConfig{
+		CheckInterval: cfg.Offline.CheckInterval,
+		OfflineAfter:  cfg.Offline.OfflineAfter,
+	})
+	offlineMonitor.Start(rootCtx)
+
+	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceSvc, alarmSvc, fenceSvc, authSvc, wsHub)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           router,
