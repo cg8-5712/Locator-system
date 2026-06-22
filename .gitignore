@@ -1,4 +1,5 @@
 .cache/
+.codex/
 .env
 *.exe
 *.db

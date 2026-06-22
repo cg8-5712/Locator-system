@@ -8,6 +8,7 @@ import (
 
 	"locator/internal/model"
 	"locator/internal/repository"
+	"gorm.io/datatypes"
 )
 
 var (
@@ -76,17 +77,21 @@ type DeviceTrackResult struct {
 }
 
 type DeviceSummary struct {
-	DeviceSN    string     `json:"device_sn"`
-	IMEI        string     `json:"imei"`
-	ICCID       string     `json:"iccid"`
-	Name        string     `json:"name"`
-	TopicPrefix string     `json:"topic_prefix"`
-	GPSState    string     `json:"gps_state"`
-	Status      int        `json:"status"`
-	Battery     int        `json:"battery"`
-	LastFixAt   *time.Time `json:"last_fix_at"`
-	LastOnline  *time.Time `json:"last_online"`
-	CreatedAt   time.Time  `json:"created_at"`
+	DeviceSN        string         `json:"device_sn"`
+	IMEI            string         `json:"imei"`
+	ICCID           string         `json:"iccid"`
+	Name            string         `json:"name"`
+	TopicPrefix     string         `json:"topic_prefix"`
+	GPSState        string         `json:"gps_state"`
+	Status          int            `json:"status"`
+	Battery         int            `json:"battery"`
+	StatusPayload   datatypes.JSON `json:"status_payload,omitempty"`
+	ConfigPayload   datatypes.JSON `json:"config_payload,omitempty"`
+	StatusUpdatedAt *time.Time     `json:"status_updated_at"`
+	ConfigUpdatedAt *time.Time     `json:"config_updated_at"`
+	LastFixAt       *time.Time     `json:"last_fix_at"`
+	LastOnline      *time.Time     `json:"last_online"`
+	CreatedAt       time.Time      `json:"created_at"`
 }
 
 type DeviceTrackPoint struct {
@@ -303,18 +308,30 @@ func translateRepositoryError(err error) error {
 
 func mapDeviceSummary(device model.Device) DeviceSummary {
 	return DeviceSummary{
-		DeviceSN:    device.DeviceSN,
-		IMEI:        stringValue(device.IMEI),
-		ICCID:       stringValue(device.ICCID),
-		Name:        device.Name,
-		TopicPrefix: device.TopicPrefix,
-		GPSState:    device.GPSState,
-		Status:      device.Status,
-		Battery:     device.Battery,
-		LastFixAt:   device.LastFixAt,
-		LastOnline:  device.LastOnline,
-		CreatedAt:   device.CreatedAt,
+		DeviceSN:        device.DeviceSN,
+		IMEI:            stringValue(device.IMEI),
+		ICCID:           stringValue(device.ICCID),
+		Name:            device.Name,
+		TopicPrefix:     device.TopicPrefix,
+		GPSState:        device.GPSState,
+		Status:          device.Status,
+		Battery:         device.Battery,
+		StatusPayload:   copyJSON(device.StatusPayload),
+		ConfigPayload:   copyJSON(device.ConfigPayload),
+		StatusUpdatedAt: device.StatusUpdatedAt,
+		ConfigUpdatedAt: device.ConfigUpdatedAt,
+		LastFixAt:       device.LastFixAt,
+		LastOnline:      device.LastOnline,
+		CreatedAt:       device.CreatedAt,
 	}
+}
+
+func copyJSON(value datatypes.JSON) datatypes.JSON {
+	if len(value) == 0 {
+		return nil
+	}
+
+	return append(datatypes.JSON(nil), value...)
 }
 
 func buildPagination(page int, pageSize int, total int64) Pagination {

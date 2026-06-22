@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -245,7 +246,7 @@ func TestMQTTMessageProcessorStoresNoFixKeepaliveAndStatusConfig(t *testing.T) {
 
 	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
 		Topic:      "locator/locator-esp32s3-001/status",
-		Payload:    []byte(`{"build":"Jun 20 2026 10:32:11","startup":1,"health":1,"gps":"located","net":1,"mqtt":1,"creg":1,"imei":"868478081658261","iccid":"89860412102570034386","fw":"+VERSION=CT12_V1.0.5"}`),
+		Payload:    []byte(`{"build":"Jun 20 2026 10:32:11","startup":1,"health":1,"gps":"located","net":1,"mqtt":1,"creg":1,"fix_age_ms":4200,"imei":"868478081658261","iccid":"89860412102570034386","fw":"+VERSION=CT12_V1.0.5"}`),
 		ReceivedAt: receivedAt,
 	}); err != nil {
 		t.Fatalf("status HandleMessage() error = %v", err)
@@ -282,6 +283,34 @@ func TestMQTTMessageProcessorStoresNoFixKeepaliveAndStatusConfig(t *testing.T) {
 
 	if device.GPSState != "unable" {
 		t.Fatalf("device.GPSState = %q, want unable", device.GPSState)
+	}
+
+	if device.StatusUpdatedAt == nil || !device.StatusUpdatedAt.Equal(receivedAt) {
+		t.Fatalf("device.StatusUpdatedAt = %v, want %v", device.StatusUpdatedAt, receivedAt)
+	}
+
+	if device.ConfigUpdatedAt == nil || !device.ConfigUpdatedAt.Equal(receivedAt.Add(time.Minute)) {
+		t.Fatalf("device.ConfigUpdatedAt = %v, want %v", device.ConfigUpdatedAt, receivedAt.Add(time.Minute))
+	}
+
+	if device.LastFixAt == nil || !device.LastFixAt.Equal(receivedAt.Add(-4200*time.Millisecond)) {
+		t.Fatalf("device.LastFixAt = %v, want %v", device.LastFixAt, receivedAt.Add(-4200*time.Millisecond))
+	}
+
+	var statusPayload map[string]any
+	if err := json.Unmarshal(device.StatusPayload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal device.StatusPayload error = %v", err)
+	}
+	if gps, ok := statusPayload["gps"].(string); !ok || gps != "located" {
+		t.Fatalf("status payload gps = %v, want located", statusPayload["gps"])
+	}
+
+	var configPayload map[string]any
+	if err := json.Unmarshal(device.ConfigPayload, &configPayload); err != nil {
+		t.Fatalf("unmarshal device.ConfigPayload error = %v", err)
+	}
+	if remoteCfg, ok := configPayload["remote_cfg"].(float64); !ok || int(remoteCfg) != 1 {
+		t.Fatalf("config payload remote_cfg = %v, want 1", configPayload["remote_cfg"])
 	}
 }
 

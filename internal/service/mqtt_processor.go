@@ -353,15 +353,27 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 func (p *MQTTMessageProcessor) handleStatus(ctx context.Context, topic deviceTopic, payload map[string]any, message mqtt.ReceivedMessage) error {
 	var statusEvent *DeviceStatusEvent
 
-	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	statusPayload, err := encodePayloadJSON(payload)
+	if err != nil {
+		return fmt.Errorf("encode status payload: %w", err)
+	}
+
+	err = p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
 		}
 
 		updates := buildDeviceUpdates(payload, topic, message.ReceivedAt)
+		updates["status_payload"] = statusPayload
+		updates["status_updated_at"] = message.ReceivedAt.UTC()
 		if gpsState, ok := lookupString(payload, "gps"); ok {
 			updates["gps_state"] = gpsState
+		}
+		if gpsState, ok := lookupString(payload, "gps"); ok && gpsState == "located" {
+			if fixAgeMS, ok := lookupInt(payload, "fix_age_ms"); ok && fixAgeMS >= 0 {
+				updates["last_fix_at"] = message.ReceivedAt.UTC().Add(-time.Duration(fixAgeMS) * time.Millisecond)
+			}
 		}
 
 		if startup, ok := lookupInt(payload, "startup"); ok {
@@ -446,7 +458,12 @@ func (p *MQTTMessageProcessor) handleAlarm(ctx context.Context, topic deviceTopi
 func (p *MQTTMessageProcessor) handleConfig(ctx context.Context, topic deviceTopic, payload map[string]any, message mqtt.ReceivedMessage) error {
 	var statusEvent *DeviceStatusEvent
 
-	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	configPayload, err := encodePayloadJSON(payload)
+	if err != nil {
+		return fmt.Errorf("encode config payload: %w", err)
+	}
+
+	err = p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		device, err := findOrCreateDevice(tx, topic)
 		if err != nil {
 			return err
@@ -454,6 +471,8 @@ func (p *MQTTMessageProcessor) handleConfig(ctx context.Context, topic deviceTop
 
 		updates := buildDeviceUpdates(payload, topic, message.ReceivedAt)
 		updates["status"] = statusOnline
+		updates["config_payload"] = configPayload
+		updates["config_updated_at"] = message.ReceivedAt.UTC()
 		if err := updateDevice(tx, device.ID, updates); err != nil {
 			return err
 		}
@@ -562,6 +581,15 @@ func decodePayload(payload []byte) (map[string]any, error) {
 	}
 
 	return parsed, nil
+}
+
+func encodePayloadJSON(payload map[string]any) (datatypes.JSON, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return datatypes.JSON(body), nil
 }
 
 func parseCompactFullLocation(raw string, receivedAt time.Time) (fullLocationPayload, error) {
@@ -907,15 +935,19 @@ func loadDeviceByID(tx *gorm.DB, deviceID uint64) (*model.Device, error) {
 
 func buildDeviceStatusEvent(device model.Device) *DeviceStatusEvent {
 	return &DeviceStatusEvent{
-		DeviceSN:    device.DeviceSN,
-		TopicPrefix: device.TopicPrefix,
-		Status:      device.Status,
-		GPSState:    device.GPSState,
-		Battery:     device.Battery,
-		IMEI:        stringValue(device.IMEI),
-		ICCID:       stringValue(device.ICCID),
-		LastOnline:  device.LastOnline,
-		LastFixAt:   device.LastFixAt,
+		DeviceSN:        device.DeviceSN,
+		TopicPrefix:     device.TopicPrefix,
+		Status:          device.Status,
+		GPSState:        device.GPSState,
+		Battery:         device.Battery,
+		IMEI:            stringValue(device.IMEI),
+		ICCID:           stringValue(device.ICCID),
+		StatusPayload:   append(datatypes.JSON(nil), device.StatusPayload...),
+		ConfigPayload:   append(datatypes.JSON(nil), device.ConfigPayload...),
+		StatusUpdatedAt: device.StatusUpdatedAt,
+		ConfigUpdatedAt: device.ConfigUpdatedAt,
+		LastOnline:      device.LastOnline,
+		LastFixAt:       device.LastFixAt,
 	}
 }
 

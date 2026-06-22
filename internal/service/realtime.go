@@ -1,6 +1,10 @@
 package service
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 type RealtimePublisher interface {
 	PublishLocation(event LocationEvent)
@@ -20,15 +24,19 @@ type LocationEvent struct {
 }
 
 type DeviceStatusEvent struct {
-	DeviceSN    string     `json:"device_sn"`
-	TopicPrefix string     `json:"topic_prefix"`
-	Status      int        `json:"status"`
-	GPSState    string     `json:"gps_state"`
-	Battery     int        `json:"battery"`
-	IMEI        string     `json:"imei,omitempty"`
-	ICCID       string     `json:"iccid,omitempty"`
-	LastOnline  *time.Time `json:"last_online,omitempty"`
-	LastFixAt   *time.Time `json:"last_fix_at,omitempty"`
+	DeviceSN        string         `json:"device_sn"`
+	TopicPrefix     string         `json:"topic_prefix"`
+	Status          int            `json:"status"`
+	GPSState        string         `json:"gps_state"`
+	Battery         int            `json:"battery"`
+	IMEI            string         `json:"imei,omitempty"`
+	ICCID           string         `json:"iccid,omitempty"`
+	StatusPayload   datatypes.JSON `json:"status_payload,omitempty"`
+	ConfigPayload   datatypes.JSON `json:"config_payload,omitempty"`
+	StatusUpdatedAt *time.Time     `json:"status_updated_at,omitempty"`
+	ConfigUpdatedAt *time.Time     `json:"config_updated_at,omitempty"`
+	LastOnline      *time.Time     `json:"last_online,omitempty"`
+	LastFixAt       *time.Time     `json:"last_fix_at,omitempty"`
 }
 
 type AlarmEvent struct {

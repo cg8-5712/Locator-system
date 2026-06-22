@@ -19,18 +19,22 @@ func (User) TableName() string {
 }
 
 type Device struct {
-	ID          uint64     `json:"id" gorm:"primaryKey"`
-	DeviceSN    string     `json:"device_sn" gorm:"column:device_sn;size:64;uniqueIndex;not null"`
-	IMEI        *string    `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
-	ICCID       *string    `json:"iccid" gorm:"column:iccid;size:32;index"`
-	Name        string     `json:"name" gorm:"size:64"`
-	TopicPrefix string     `json:"topic_prefix" gorm:"column:topic_prefix;size:32;not null;default:locator"`
-	GPSState    string     `json:"gps_state" gorm:"column:gps_state;size:32"`
-	Status      int        `json:"status" gorm:"not null;default:0"`
-	Battery     int        `json:"battery" gorm:"not null;default:0"`
-	LastFixAt   *time.Time `json:"last_fix_at" gorm:"column:last_fix_at"`
-	LastOnline  *time.Time `json:"last_online" gorm:"column:last_online"`
-	CreatedAt   time.Time  `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
+	ID              uint64         `json:"id" gorm:"primaryKey"`
+	DeviceSN        string         `json:"device_sn" gorm:"column:device_sn;size:64;uniqueIndex;not null"`
+	IMEI            *string        `json:"imei" gorm:"column:imei;size:32;uniqueIndex"`
+	ICCID           *string        `json:"iccid" gorm:"column:iccid;size:32;index"`
+	Name            string         `json:"name" gorm:"size:64"`
+	TopicPrefix     string         `json:"topic_prefix" gorm:"column:topic_prefix;size:32;not null;default:locator"`
+	GPSState        string         `json:"gps_state" gorm:"column:gps_state;size:32"`
+	Status          int            `json:"status" gorm:"not null;default:0"`
+	Battery         int            `json:"battery" gorm:"not null;default:0"`
+	StatusPayload   datatypes.JSON `json:"status_payload" gorm:"column:status_payload"`
+	ConfigPayload   datatypes.JSON `json:"config_payload" gorm:"column:config_payload"`
+	StatusUpdatedAt *time.Time     `json:"status_updated_at" gorm:"column:status_updated_at"`
+	ConfigUpdatedAt *time.Time     `json:"config_updated_at" gorm:"column:config_updated_at"`
+	LastFixAt       *time.Time     `json:"last_fix_at" gorm:"column:last_fix_at"`
+	LastOnline      *time.Time     `json:"last_online" gorm:"column:last_online"`
+	CreatedAt       time.Time      `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
 }
 
 func (Device) TableName() string {
