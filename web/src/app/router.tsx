@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Navigate, createBrowserRouter } from "react-router-dom";
 import { RootLayout } from "../components/shell/root-layout";
 import { ProtectedLayout } from "../components/shell/protected-layout";
@@ -11,7 +12,7 @@ import { AlarmsPage } from "../pages/alarms/alarms-page";
 import { HistoryPage } from "../pages/history/history-page";
 import { DemoSharePage } from "../pages/share/demo-share-page";
 
-function withDataSource(dataSource: MapDataSource, element: React.ReactNode) {
+function withDataSource(dataSource: MapDataSource, element: ReactNode) {
   return <MapDataProvider value={dataSource}>{element}</MapDataProvider>;
 }
 

@@ -5,11 +5,31 @@ import { AppHeader } from "../../components/shell/app-header";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
 import { buildModePath, getModeLabel } from "../../features/map-view/mode";
 import { deriveLivePoints } from "../../features/map-view/points";
-import { getAlarmTypeView } from "../../lib/status";
+import { getAlarmTypeView, getGPSStateLabel } from "../../lib/status";
 import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import { useMapStore } from "../../stores/map-store";
 
 const alarmTypes = ["all", "sos", "low_battery", "out_of_fence", "offline"] as const;
+
+const text = {
+  mode: "\u6a21\u5f0f",
+  total: "\u544a\u8b66\u603b\u6570",
+  online: "\u5728\u7ebf",
+  title: "\u544a\u8b66\u4e2d\u5fc3",
+  desc:
+    "\u6309\u7edf\u4e00\u6570\u636e\u6e90\u8bfb\u53d6 recent alarms\u3002demo \u6a21\u5f0f\u7528\u4e8e\u9a8c\u8bc1\u4ea4\u4e92\u6d41\uff0clive \u6a21\u5f0f\u76f4\u63a5\u5bf9\u63a5 /api/alarms \u4e0e\u5b9e\u65f6 WebSocket \u544a\u8b66\u3002",
+  backMap: "\u8fd4\u56de\u5730\u56fe",
+  all: "\u5168\u90e8",
+  loadError: "\u544a\u8b66\u6570\u636e\u52a0\u8f7d\u5931\u8d25",
+  empty: "\u5f53\u524d\u6ca1\u6709\u5339\u914d\u7684\u544a\u8b66\u8bb0\u5f55\u3002",
+  focus: "\u5f53\u524d\u7126\u70b9",
+  openHistory: "\u67e5\u770b\u5386\u53f2\u8f68\u8ff9",
+  type: "\u544a\u8b66\u7c7b\u578b",
+  occurredAt: "\u53d1\u751f\u65f6\u95f4",
+  lastOnline: "\u6700\u8fd1\u5728\u7ebf",
+  deviceStatus: "\u8bbe\u5907\u72b6\u6001",
+  placeholder: "\u9009\u62e9\u4e00\u6761\u544a\u8b66\u540e\u67e5\u770b\u5730\u56fe\u8054\u52a8\u548c\u8be6\u60c5\u6458\u8981\u3002",
+};
 
 export function AlarmsPage() {
   const navigate = useNavigate();
@@ -48,12 +68,12 @@ export function AlarmsPage() {
 
   const headerMetrics = [
     {
-      label: "模式",
+      label: text.mode,
       value: getModeLabel(dataSource.mode),
       tone: dataSource.mode === "demo" ? ("warn" as const) : ("brand" as const),
     },
     {
-      label: "告警总数",
+      label: text.total,
       value: `${alarmsResult.alarms.length}`,
       tone: alarmsResult.alarms.length > 0 ? ("warn" as const) : ("default" as const),
     },
@@ -66,7 +86,7 @@ export function AlarmsPage() {
           : ("default" as const),
     },
     {
-      label: "在线",
+      label: text.online,
       value: `${devices.filter((item) => item.status !== 0).length}`,
     },
   ];
@@ -76,8 +96,8 @@ export function AlarmsPage() {
       <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4">
         <AppHeader
           mode={dataSource.mode}
-          title="告警中心"
-          description="按统一数据源读取 recent alarms。demo 模式用于验证交互流，live 模式直接对接 /api/alarms 与实时 WebSocket 告警。"
+          title={text.title}
+          description={text.desc}
           metrics={headerMetrics}
           active="alarms"
         >
@@ -85,7 +105,7 @@ export function AlarmsPage() {
             to={buildModePath(dataSource.mode, "/map")}
             className="rounded-full border border-black/8 bg-white/72 px-4 py-2 text-sm font-semibold text-[#10212b] transition hover:bg-white"
           >
-            返回地图
+            {text.backMap}
           </Link>
         </AppHeader>
 
@@ -93,10 +113,7 @@ export function AlarmsPage() {
           <aside className="glass-panel flex min-h-0 flex-col rounded-[28px] p-4">
             <div className="flex flex-wrap gap-2">
               {alarmTypes.map((type) => {
-                const label =
-                  type === "all"
-                    ? "全部"
-                    : getAlarmTypeView(type).label;
+                const label = type === "all" ? text.all : getAlarmTypeView(type).label;
 
                 return (
                   <button
@@ -118,13 +135,13 @@ export function AlarmsPage() {
             <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {alarmsResult.isError ? (
                 <div className="rounded-[24px] border border-[#d94747]/20 bg-[#d94747]/8 px-4 py-6 text-sm leading-7 text-[#9d2323]">
-                  {alarmsResult.errorMessage ?? "告警数据加载失败"}
+                  {alarmsResult.errorMessage ?? text.loadError}
                 </div>
               ) : null}
 
               {!alarmsResult.isError && alarms.length === 0 ? (
                 <div className="rounded-[24px] border border-dashed border-black/10 bg-white/56 px-4 py-6 text-sm leading-7 text-[#546570]">
-                  当前没有匹配的告警记录。
+                  {text.empty}
                 </div>
               ) : null}
 
@@ -207,7 +224,7 @@ export function AlarmsPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1f88c9]">
-                        当前焦点
+                        {text.focus}
                       </p>
                       <h3 className="mt-2 text-2xl font-semibold text-[#10212b]">
                         {selectedDevice.name || selectedDevice.device_sn}
@@ -226,15 +243,15 @@ export function AlarmsPage() {
                       }
                       className="rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:bg-white"
                     >
-                      查看历史轨迹
+                      {text.openHistory}
                     </button>
                   </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <InfoCard label="告警类型" value={getAlarmTypeView(selectedAlarm.type).label} />
-                    <InfoCard label="发生时间" value={formatDateTime(selectedAlarm.created_at)} />
-                    <InfoCard label="最近在线" value={formatRelativeTime(selectedDevice.last_online)} />
-                    <InfoCard label="设备状态" value={selectedDevice.gps_state || "unknown"} />
+                    <InfoCard label={text.type} value={getAlarmTypeView(selectedAlarm.type).label} />
+                    <InfoCard label={text.occurredAt} value={formatDateTime(selectedAlarm.created_at)} />
+                    <InfoCard label={text.lastOnline} value={formatRelativeTime(selectedDevice.last_online)} />
+                    <InfoCard label={text.deviceStatus} value={getGPSStateLabel(selectedDevice.gps_state)} />
                   </div>
 
                   <div className="mt-5 rounded-[24px] bg-white/58 p-4 text-sm leading-7 text-[#546570]">
@@ -243,7 +260,7 @@ export function AlarmsPage() {
                 </>
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-[#546570]">
-                  选择一条告警后查看地图联动和详情摘要。
+                  {text.placeholder}
                 </div>
               )}
             </section>

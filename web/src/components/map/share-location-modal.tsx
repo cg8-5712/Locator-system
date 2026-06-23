@@ -110,6 +110,8 @@ export function ShareLocationModal({
     return null;
   }
 
+  const currentDevice = device;
+
   function handleCreate() {
     const expirationDate = expirationPreview;
     if (!expirationDate || Number.isNaN(expirationDate.getTime())) {
@@ -119,7 +121,7 @@ export function ShareLocationModal({
     const shareCode = createRandomCode();
     const previewUrl =
       mode === "demo"
-        ? `${window.location.origin}/demo/share/${device.device_sn}?code=${shareCode}`
+        ? `${window.location.origin}/demo/share/${currentDevice.device_sn}?code=${shareCode}`
         : `https://maps.locatorhub.com/s/${shareCode}`;
 
     const remainingSeconds = Math.max(
@@ -164,7 +166,7 @@ export function ShareLocationModal({
               Share Preview
             </p>
             <h2 className="mt-2 text-2xl font-semibold text-[#10212b]">
-              {text.title} · {device.name || device.device_sn}
+              {text.title} · {currentDevice.name || currentDevice.device_sn}
             </h2>
             <p className="mt-2 text-sm leading-7 text-[#546570]">
               {mode === "demo" ? text.demoDesc : text.liveDesc}
