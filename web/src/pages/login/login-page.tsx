@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { login } from "../../services/http/auth";
 import { authStore } from "../../stores/auth-store";
 
@@ -72,7 +72,11 @@ export function LoginPage() {
                 进入调度台
               </h2>
               <p className="mt-4 text-sm leading-7 text-[#546570]">
-                当前版本已接通后端登录、设备列表和实时通道基础结构。
+                当前版本已接通后端登录、设备列表和实时通道基础结构。若仅想验证界面交互，可以直接进入
+                <Link className="ml-1 font-semibold text-[#1f88c9]" to="/demo/map">
+                  死数据验证模式
+                </Link>
+                。
               </p>
 
               <form className="mt-10 space-y-5" onSubmit={handleSubmit}>
@@ -113,6 +117,13 @@ export function LoginPage() {
                   {submitting ? "登录中..." : "进入系统"}
                 </button>
               </form>
+
+              <div className="mt-4 rounded-2xl border border-[#1f88c9]/18 bg-[#1f88c9]/7 px-4 py-3 text-sm text-[#1b628a]">
+                演示入口：
+                <Link className="ml-2 font-semibold underline" to="/demo/map">
+                  /demo/map
+                </Link>
+              </div>
             </div>
           </div>
         </div>

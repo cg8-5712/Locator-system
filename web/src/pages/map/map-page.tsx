@@ -2,31 +2,29 @@ import { useEffect, useMemo } from "react";
 import { DeviceDetailPanel } from "../../components/map/device-detail-panel";
 import { DeviceMap } from "../../components/map/device-map";
 import { DeviceSidebar } from "../../components/map/device-sidebar";
-import type { LiveDevicePoint } from "../../features/map-view/map-types";
-import { isValidCoordinate } from "../../lib/geo";
 import { useAuth } from "../../hooks/use-auth";
-import { useDeviceDetail, useDeviceList } from "../../hooks/use-devices";
-import { useRealtime } from "../../hooks/use-realtime";
+import { isValidCoordinate } from "../../lib/geo";
 import { authStore } from "../../stores/auth-store";
 import { useMapStore } from "../../stores/map-store";
+import { useMapDataSource } from "../../features/map-view/map-data-context";
+import type { LiveDevicePoint } from "../../features/map-view/map-types";
 
 export function MapPage() {
-  useRealtime();
-
+  const dataSource = useMapDataSource();
   const { user } = useAuth();
   const {
     selectedDeviceSN,
     searchText,
     followSelected,
-    wsConnected,
-    liveLocations,
     setSelectedDeviceSN,
     setSearchText,
     setFollowSelected,
   } = useMapStore();
 
-  const devicesQuery = useDeviceList();
-  const devices = devicesQuery.data?.devices ?? [];
+  const devicesResult = dataSource.useDevices();
+  const realtimeResult = dataSource.useRealtimeFeed();
+
+  const devices = devicesResult.devices;
   const filteredDevices = useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
     if (!keyword) {
@@ -41,7 +39,7 @@ export function MapPage() {
   }, [devices, searchText]);
 
   const selectedSN = selectedDeviceSN ?? filteredDevices[0]?.device_sn ?? null;
-  const selectedDeviceQuery = useDeviceDetail(selectedSN);
+  const selectedDeviceResult = dataSource.useDeviceDetail(selectedSN);
 
   useEffect(() => {
     if (!selectedDeviceSN && filteredDevices[0]) {
@@ -53,7 +51,7 @@ export function MapPage() {
     const points: LiveDevicePoint[] = [];
 
     for (const device of filteredDevices) {
-      const liveLocation = liveLocations[device.device_sn];
+      const liveLocation = realtimeResult.liveLocations[device.device_sn];
       if (liveLocation) {
         points.push({
           deviceSN: device.device_sn,
@@ -88,7 +86,9 @@ export function MapPage() {
     }
 
     return points;
-  }, [filteredDevices, liveLocations]);
+  }, [filteredDevices, realtimeResult.liveLocations]);
+
+  const modeLabel = dataSource.mode === "demo" ? "死数据验证" : "后端联调";
 
   return (
     <main className="min-h-screen p-4 md:p-5">
@@ -105,19 +105,29 @@ export function MapPage() {
 
           <div className="flex flex-wrap items-center gap-3">
             <TopMetric
+              label="模式"
+              value={modeLabel}
+              tone={dataSource.mode === "demo" ? "warn" : "brand"}
+            />
+            <TopMetric
               label="在线"
               value={`${devices.filter((item) => item.status !== 0).length}`}
             />
             <TopMetric label="总人数" value={`${devices.length}`} />
-            <TopMetric label="当前用户" value={user?.username ?? "--"} />
-            <TopMetric label="实时通道" value={wsConnected ? "已连接" : "重连中"} />
-            <button
-              type="button"
-              onClick={() => authStore.getState().clearSession()}
-              className="rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:bg-white"
-            >
-              退出登录
-            </button>
+            <TopMetric label="当前用户" value={user?.username ?? "演示访客"} />
+            <TopMetric
+              label="实时通道"
+              value={realtimeResult.connected ? "已连接" : "未连接"}
+            />
+            {dataSource.mode === "live" ? (
+              <button
+                type="button"
+                onClick={() => authStore.getState().clearSession()}
+                className="rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:bg-white"
+              >
+                退出登录
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -155,29 +165,50 @@ export function MapPage() {
                 </div>
               </div>
 
-              <DeviceMap
-                devices={filteredDevices}
-                points={livePoints}
-                selectedDeviceSN={selectedSN}
-                followSelected={followSelected}
-                onSelect={(deviceSN) => {
-                  setSelectedDeviceSN(deviceSN);
-                  setFollowSelected(true);
-                }}
-              />
+              {devicesResult.isError ? (
+                <div className="flex h-full items-center justify-center rounded-[24px] bg-white/60 p-8 text-center text-sm leading-7 text-[#9d2323]">
+                  {devicesResult.errorMessage ?? "设备数据加载失败"}
+                </div>
+              ) : (
+                <DeviceMap
+                  devices={filteredDevices}
+                  points={livePoints}
+                  selectedDeviceSN={selectedSN}
+                  followSelected={followSelected}
+                  onSelect={(deviceSN) => {
+                    setSelectedDeviceSN(deviceSN);
+                    setFollowSelected(true);
+                  }}
+                />
+              )}
             </div>
           </div>
 
-          <DeviceDetailPanel device={selectedDeviceQuery.data ?? null} />
+          <DeviceDetailPanel device={selectedDeviceResult.device} />
         </section>
       </div>
     </main>
   );
 }
 
-function TopMetric({ label, value }: { label: string; value: string }) {
+function TopMetric({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "brand" | "warn";
+}) {
+  const toneClassName =
+    tone === "brand"
+      ? "border-[#1f88c9]/18 bg-[#1f88c9]/8"
+      : tone === "warn"
+        ? "border-[#d48a1f]/18 bg-[#d48a1f]/10"
+        : "border-black/6 bg-white/66";
+
   return (
-    <div className="rounded-2xl border border-black/6 bg-white/66 px-4 py-2.5">
+    <div className={`rounded-2xl border px-4 py-2.5 ${toneClassName}`}>
       <div className="text-[11px] uppercase tracking-[0.18em] text-[#7a8a94]">
         {label}
       </div>
