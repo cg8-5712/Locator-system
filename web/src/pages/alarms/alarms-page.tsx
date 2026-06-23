@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { DeviceMap } from "../../components/map/device-map";
 import { AppHeader } from "../../components/shell/app-header";
+import { buildMapDecorations } from "../../features/map-view/map-decorations";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
-import { buildModePath, getModeLabel } from "../../features/map-view/mode";
+import { buildModePath } from "../../features/map-view/mode";
 import { deriveLivePoints } from "../../features/map-view/points";
 import { getAlarmTypeView, getGPSStateLabel } from "../../lib/status";
 import { formatDateTime, formatRelativeTime } from "../../lib/time";
@@ -12,23 +13,21 @@ import { useMapStore } from "../../stores/map-store";
 const alarmTypes = ["all", "sos", "low_battery", "out_of_fence", "offline"] as const;
 
 const text = {
-  mode: "\u6a21\u5f0f",
-  total: "\u544a\u8b66\u603b\u6570",
-  online: "\u5728\u7ebf",
-  title: "\u544a\u8b66\u4e2d\u5fc3",
-  desc:
-    "\u6309\u7edf\u4e00\u6570\u636e\u6e90\u8bfb\u53d6 recent alarms\u3002demo \u6a21\u5f0f\u7528\u4e8e\u9a8c\u8bc1\u4ea4\u4e92\u6d41\uff0clive \u6a21\u5f0f\u76f4\u63a5\u5bf9\u63a5 /api/alarms \u4e0e\u5b9e\u65f6 WebSocket \u544a\u8b66\u3002",
-  backMap: "\u8fd4\u56de\u5730\u56fe",
-  all: "\u5168\u90e8",
-  loadError: "\u544a\u8b66\u6570\u636e\u52a0\u8f7d\u5931\u8d25",
-  empty: "\u5f53\u524d\u6ca1\u6709\u5339\u914d\u7684\u544a\u8b66\u8bb0\u5f55\u3002",
-  focus: "\u5f53\u524d\u7126\u70b9",
-  openHistory: "\u67e5\u770b\u5386\u53f2\u8f68\u8ff9",
-  type: "\u544a\u8b66\u7c7b\u578b",
-  occurredAt: "\u53d1\u751f\u65f6\u95f4",
-  lastOnline: "\u6700\u8fd1\u5728\u7ebf",
-  deviceStatus: "\u8bbe\u5907\u72b6\u6001",
-  placeholder: "\u9009\u62e9\u4e00\u6761\u544a\u8b66\u540e\u67e5\u770b\u5730\u56fe\u8054\u52a8\u548c\u8be6\u60c5\u6458\u8981\u3002",
+  total: "告警总数",
+  online: "在线",
+  title: "告警中心",
+  desc: "集中查看 SOS、围栏告警、低电量和离线恢复记录，并联动地图定位到目标人员。",
+  backMap: "返回地图",
+  all: "全部",
+  loadError: "告警数据加载失败",
+  empty: "当前没有匹配的告警记录。",
+  focus: "当前焦点",
+  openHistory: "查看历史轨迹",
+  type: "告警类型",
+  occurredAt: "发生时间",
+  lastOnline: "最近在线",
+  deviceStatus: "设备状态",
+  placeholder: "选择一条告警后查看地图联动和详情摘要。",
 };
 
 export function AlarmsPage() {
@@ -37,13 +36,23 @@ export function AlarmsPage() {
   const alarmsResult = dataSource.useAlarms({ limit: 50 });
   const devicesResult = dataSource.useDevices();
   const realtimeResult = dataSource.useRealtimeFeed();
-  const { selectedDeviceSN, setSelectedDeviceSN, setFollowSelected } = useMapStore();
+  const {
+    selectedDeviceSN,
+    focusSequence,
+    setSelectedDeviceSN,
+    setFollowSelected,
+    triggerFocus,
+  } = useMapStore();
   const [typeFilter, setTypeFilter] = useState<(typeof alarmTypes)[number]>("all");
 
   const devices = devicesResult.devices;
   const livePoints = useMemo(
     () => deriveLivePoints(devices, realtimeResult.liveLocations),
     [devices, realtimeResult.liveLocations]
+  );
+  const mapDecorations = useMemo(
+    () => buildMapDecorations(devices, alarmsResult.alarms),
+    [alarmsResult.alarms, devices]
   );
 
   const alarms = useMemo(() => {
@@ -58,8 +67,9 @@ export function AlarmsPage() {
     if (!selectedDeviceSN && alarms[0]) {
       setSelectedDeviceSN(alarms[0].device_sn);
       setFollowSelected(true);
+      triggerFocus();
     }
-  }, [alarms, selectedDeviceSN, setFollowSelected, setSelectedDeviceSN]);
+  }, [alarms, selectedDeviceSN, setFollowSelected, setSelectedDeviceSN, triggerFocus]);
 
   const selectedAlarm =
     alarms.find((alarm) => alarm.device_sn === selectedDeviceSN) ?? alarms[0] ?? null;
@@ -67,11 +77,6 @@ export function AlarmsPage() {
     devices.find((device) => device.device_sn === selectedAlarm?.device_sn) ?? null;
 
   const headerMetrics = [
-    {
-      label: text.mode,
-      value: getModeLabel(dataSource.mode),
-      tone: dataSource.mode === "demo" ? ("warn" as const) : ("brand" as const),
-    },
     {
       label: text.total,
       value: `${alarmsResult.alarms.length}`,
@@ -158,6 +163,7 @@ export function AlarmsPage() {
                     onClick={() => {
                       setSelectedDeviceSN(alarm.device_sn);
                       setFollowSelected(true);
+                      triggerFocus();
                     }}
                     className={`w-full rounded-[24px] border px-4 py-4 text-left transition ${
                       active
@@ -170,9 +176,7 @@ export function AlarmsPage() {
                         <div className="text-sm font-semibold text-[#10212b]">
                           {device?.name || alarm.device_sn}
                         </div>
-                        <div className="mt-1 text-xs text-[#546570]">
-                          {alarm.device_sn}
-                        </div>
+                        <div className="mt-1 text-xs text-[#546570]">{alarm.device_sn}</div>
                       </div>
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -209,10 +213,14 @@ export function AlarmsPage() {
                   emergencyDeviceSN={
                     selectedAlarm?.type === "sos" ? selectedAlarm.device_sn : null
                   }
+                  fenceAlertDeviceSNs={mapDecorations.fenceAlertDeviceSNs}
+                  geofenceOverlays={mapDecorations.geofenceOverlays}
                   followSelected
+                  focusSequence={focusSequence}
                   onSelect={(deviceSN) => {
                     setSelectedDeviceSN(deviceSN);
                     setFollowSelected(true);
+                    triggerFocus();
                   }}
                 />
               </div>

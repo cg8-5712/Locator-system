@@ -10,6 +10,14 @@ export interface LiveDevicePoint {
   accuracyMeters?: number;
 }
 
+export interface GeofenceOverlay {
+  deviceSN: string;
+  name: string | null;
+  centerLat: number;
+  centerLng: number;
+  radiusMeters: number;
+}
+
 export type LiveLocationState = Record<
   string,
   {

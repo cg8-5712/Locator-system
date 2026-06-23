@@ -70,6 +70,14 @@ export const mockDevices: DeviceSummary[] = [
       address: "北京市东城区东直门外大街巡检点",
       lat: 39.9142,
       lng: 116.4119,
+      geofence: {
+        name: "Core Service Area",
+        center: {
+          lat: 39.9129,
+          lng: 116.4098,
+        },
+        radius_m: 180,
+      },
     },
     config_payload: {
       pub_ms: 30000,

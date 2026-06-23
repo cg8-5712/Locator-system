@@ -10,17 +10,39 @@ import {
 } from "react-leaflet";
 import { getGPSStateLabel, getMarkerAccent } from "../../lib/status";
 import type { DeviceSummary } from "../../types/device";
-import type { LiveDevicePoint } from "../../features/map-view/map-types";
+import type { GeofenceOverlay, LiveDevicePoint } from "../../features/map-view/map-types";
 
-function markerIcon(device: DeviceSummary, emergency: boolean) {
-  const accent = getMarkerAccent(device);
+function markerIcon(
+  device: DeviceSummary,
+  options?: {
+    emergency?: boolean;
+    fenceAlert?: boolean;
+  }
+) {
+  const emergency = options?.emergency ?? false;
+  const fenceAlert = options?.fenceAlert ?? false;
+  const accent = emergency ? "#d94747" : fenceAlert ? "#1f88c9" : getMarkerAccent(device);
   const label = (device.name || device.device_sn).trim().slice(0, 1).toUpperCase();
+  const outerClassName = [
+    "person-marker__outer",
+    emergency ? "person-marker__outer--sos" : "",
+    fenceAlert && !emergency ? "person-marker__outer--fence" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const pulseClassName = [
+    "person-marker__pulse",
+    emergency ? "person-marker__pulse--sos" : "",
+    fenceAlert && !emergency ? "person-marker__pulse--fence" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return L.divIcon({
     className: "person-marker",
     html: `
-      <div class="person-marker__outer${emergency ? " person-marker__outer--sos" : ""}" style="background:${accent}; box-shadow:0 0 0 6px ${accent}22;">
-        <span class="person-marker__pulse${emergency ? " person-marker__pulse--sos" : ""}" style="background:${accent}33;"></span>
+      <div class="${outerClassName}" style="background:${accent}; box-shadow:0 0 0 6px ${accent}22;">
+        <span class="${pulseClassName}" style="background:${accent}33;"></span>
         <span class="person-marker__inner">${label || "?"}</span>
       </div>
     `,
@@ -32,9 +54,11 @@ function markerIcon(device: DeviceSummary, emergency: boolean) {
 function MapFollower({
   selectedPoint,
   followSelected,
+  focusSequence,
 }: {
   selectedPoint: LiveDevicePoint | null;
   followSelected: boolean;
+  focusSequence: number;
 }) {
   const map = useMap();
 
@@ -47,7 +71,7 @@ function MapFollower({
       animate: true,
       duration: 1,
     });
-  }, [followSelected, map, selectedPoint]);
+  }, [focusSequence, followSelected, map, selectedPoint]);
 
   return null;
 }
@@ -81,14 +105,20 @@ export function DeviceMap({
   points,
   selectedDeviceSN,
   emergencyDeviceSN,
+  fenceAlertDeviceSNs,
+  geofenceOverlays,
   followSelected,
+  focusSequence,
   onSelect,
 }: {
   devices: DeviceSummary[];
   points: LiveDevicePoint[];
   selectedDeviceSN: string | null;
   emergencyDeviceSN?: string | null;
+  fenceAlertDeviceSNs?: Set<string>;
+  geofenceOverlays?: GeofenceOverlay[];
   followSelected: boolean;
+  focusSequence: number;
   onSelect: (deviceSN: string) => void;
 }) {
   const pointsByDeviceSN = useMemo(
@@ -111,7 +141,40 @@ export function DeviceMap({
       />
 
       <MapAutoFit points={points} />
-      <MapFollower selectedPoint={selectedPoint} followSelected={followSelected} />
+      <MapFollower
+        selectedPoint={selectedPoint}
+        followSelected={followSelected}
+        focusSequence={focusSequence}
+      />
+
+      {(geofenceOverlays ?? []).map((overlay) => (
+        <Circle
+          key={`${overlay.deviceSN}-${overlay.centerLat}-${overlay.centerLng}-${overlay.radiusMeters}`}
+          center={[overlay.centerLat, overlay.centerLng]}
+          radius={overlay.radiusMeters}
+          pathOptions={{
+            color: "#1f88c9",
+            fillColor: "#1f88c9",
+            fillOpacity: 0.08,
+            weight: 2,
+            dashArray: "8 10",
+          }}
+        >
+          <Popup>
+            <div className="min-w-[200px] space-y-1">
+              <div className="font-semibold text-[#10212b]">
+                {overlay.name || "电子围栏"}
+              </div>
+              <div className="text-sm text-[#546570]">
+                绑定设备 {overlay.deviceSN}
+              </div>
+              <div className="text-sm text-[#546570]">
+                半径 {Math.round(overlay.radiusMeters)} m
+              </div>
+            </div>
+          </Popup>
+        </Circle>
+      ))}
 
       {devices.map((device) => {
         const point = pointsByDeviceSN.get(device.device_sn);
@@ -120,12 +183,13 @@ export function DeviceMap({
         }
 
         const emergency = emergencyDeviceSN === device.device_sn;
+        const fenceAlert = fenceAlertDeviceSNs?.has(device.device_sn) ?? false;
 
         return (
           <Marker
             key={device.device_sn}
             position={[point.lat, point.lng]}
-            icon={markerIcon(device, emergency)}
+            icon={markerIcon(device, { emergency, fenceAlert })}
             eventHandlers={{
               click: () => onSelect(device.device_sn),
             }}
@@ -147,8 +211,8 @@ export function DeviceMap({
                 center={[point.lat, point.lng]}
                 radius={point.accuracyMeters ?? 5}
                 pathOptions={{
-                  color: emergency ? "#d94747" : "#1f88c9",
-                  fillColor: emergency ? "#d94747" : "#1f88c9",
+                  color: emergency ? "#d94747" : fenceAlert ? "#1f88c9" : "#1f88c9",
+                  fillColor: emergency ? "#d94747" : fenceAlert ? "#1f88c9" : "#1f88c9",
                   fillOpacity: 0.08,
                   weight: 1,
                 }}

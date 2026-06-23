@@ -6,11 +6,25 @@ import { DeviceSidebar } from "../../components/map/device-sidebar";
 import { EmergencyBanner } from "../../components/map/emergency-banner";
 import { ShareLocationModal } from "../../components/map/share-location-modal";
 import { AppHeader } from "../../components/shell/app-header";
+import { buildMapDecorations } from "../../features/map-view/map-decorations";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
-import { buildModePath, getModeLabel } from "../../features/map-view/mode";
+import { buildModePath } from "../../features/map-view/mode";
 import { deriveLivePoints } from "../../features/map-view/points";
 import { useMapStore } from "../../stores/map-store";
 import type { AlarmEvent } from "../../types/realtime";
+
+const text = {
+  title: "团队位置管理系统",
+  online: "在线",
+  total: "总人数",
+  realtime: "实时通道",
+  realtimeConnected: "已连接",
+  realtimeDisconnected: "未连接",
+  followOn: "跟随已开启",
+  followOff: "跟随已暂停",
+  livePoints: "实时点位",
+  loadError: "设备数据加载失败",
+};
 
 export function MapPage() {
   const navigate = useNavigate();
@@ -19,15 +33,18 @@ export function MapPage() {
     selectedDeviceSN,
     searchText,
     followSelected,
+    focusSequence,
     setSelectedDeviceSN,
     setSearchText,
     setFollowSelected,
+    triggerFocus,
   } = useMapStore();
   const [shareOpen, setShareOpen] = useState(false);
   const [activeSOSAlarm, setActiveSOSAlarm] = useState<AlarmEvent | null>(null);
 
   const devicesResult = dataSource.useDevices();
   const realtimeResult = dataSource.useRealtimeFeed();
+  const alarmsResult = dataSource.useAlarms({ limit: 50 });
 
   const devices = devicesResult.devices;
   const filteredDevices = useMemo(() => {
@@ -61,8 +78,9 @@ export function MapPage() {
       setActiveSOSAlarm(realtimeResult.lastMessage.data);
       setSelectedDeviceSN(realtimeResult.lastMessage.data.device_sn);
       setFollowSelected(true);
+      triggerFocus();
     }
-  }, [realtimeResult.lastMessage, setFollowSelected, setSelectedDeviceSN]);
+  }, [realtimeResult.lastMessage, setFollowSelected, setSelectedDeviceSN, triggerFocus]);
 
   const livePoints = useMemo(
     () => deriveLivePoints(filteredDevices, realtimeResult.liveLocations),
@@ -77,23 +95,23 @@ export function MapPage() {
     [devices]
   );
 
+  const mapDecorations = useMemo(
+    () => buildMapDecorations(devices, alarmsResult.alarms),
+    [alarmsResult.alarms, devices]
+  );
+
   const headerMetrics = [
     {
-      label: "模式",
-      value: getModeLabel(dataSource.mode),
-      tone: dataSource.mode === "demo" ? ("warn" as const) : ("brand" as const),
-    },
-    {
-      label: "在线",
+      label: text.online,
       value: `${devices.filter((item) => item.status !== 0).length}`,
     },
     {
-      label: "总人数",
+      label: text.total,
       value: `${devices.length}`,
     },
     {
-      label: "实时通道",
-      value: realtimeResult.connected ? "已连接" : "未连接",
+      label: text.realtime,
+      value: realtimeResult.connected ? text.realtimeConnected : text.realtimeDisconnected,
       tone: realtimeResult.connected ? ("brand" as const) : ("warn" as const),
     },
   ];
@@ -107,6 +125,7 @@ export function MapPage() {
           onLocate={() => {
             setSelectedDeviceSN(activeSOSAlarm.device_sn);
             setFollowSelected(true);
+            triggerFocus();
           }}
           onHistory={() =>
             navigate(
@@ -127,8 +146,7 @@ export function MapPage() {
       <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4">
         <AppHeader
           mode={dataSource.mode}
-          title="团队位置管理系统"
-          description="共用一套 React + TypeScript + Tailwind CSS 页面，通过 demo/live 数据源切换完成死数据验证与真实后端联调。"
+          title={text.title}
           metrics={headerMetrics}
           active="map"
         />
@@ -142,6 +160,7 @@ export function MapPage() {
             onSelect={(deviceSN) => {
               setSelectedDeviceSN(deviceSN);
               setFollowSelected(true);
+              triggerFocus();
             }}
           />
 
@@ -150,26 +169,28 @@ export function MapPage() {
               <div className="absolute left-4 top-4 z-[1000] flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setFollowSelected(!followSelected)}
+                  onClick={() => {
+                    setFollowSelected(!followSelected);
+                    if (!followSelected) {
+                      triggerFocus();
+                    }
+                  }}
                   className={`rounded-full px-4 py-2 text-xs font-semibold shadow-sm ${
                     followSelected
                       ? "bg-[#10212b] text-white"
                       : "bg-white/90 text-[#10212b]"
                   }`}
                 >
-                  {followSelected ? "跟随已开启" : "跟随已暂停"}
+                  {followSelected ? text.followOn : text.followOff}
                 </button>
                 <div className="rounded-full bg-white/90 px-4 py-2 text-xs font-semibold text-[#10212b] shadow-sm">
-                  OSM 模式
-                </div>
-                <div className="rounded-full bg-white/90 px-4 py-2 text-xs font-semibold text-[#10212b] shadow-sm">
-                  已显示 {livePoints.length} 个实时点
+                  {text.livePoints} {livePoints.length}
                 </div>
               </div>
 
               {devicesResult.isError ? (
                 <div className="flex h-full items-center justify-center rounded-[24px] bg-white/60 p-8 text-center text-sm leading-7 text-[#9d2323]">
-                  {devicesResult.errorMessage ?? "设备数据加载失败"}
+                  {devicesResult.errorMessage ?? text.loadError}
                 </div>
               ) : (
                 <DeviceMap
@@ -177,10 +198,14 @@ export function MapPage() {
                   points={livePoints}
                   selectedDeviceSN={selectedSN}
                   emergencyDeviceSN={activeSOSAlarm?.device_sn ?? null}
+                  fenceAlertDeviceSNs={mapDecorations.fenceAlertDeviceSNs}
+                  geofenceOverlays={mapDecorations.geofenceOverlays}
                   followSelected={followSelected}
+                  focusSequence={focusSequence}
                   onSelect={(deviceSN) => {
                     setSelectedDeviceSN(deviceSN);
                     setFollowSelected(true);
+                    triggerFocus();
                   }}
                 />
               )}

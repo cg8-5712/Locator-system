@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { TrackMap } from "../../components/map/track-map";
 import { AppHeader } from "../../components/shell/app-header";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
-import { buildModePath, getModeLabel } from "../../features/map-view/mode";
+import { buildModePath } from "../../features/map-view/mode";
 import { formatDateTime, formatDurationSeconds, formatRelativeTime } from "../../lib/time";
 
 const ranges = [
@@ -13,7 +13,6 @@ const ranges = [
 ] as const;
 
 const text = {
-  mode: "\u6a21\u5f0f",
   points: "\u8f68\u8ff9\u70b9",
   stops: "\u505c\u7559\u70b9",
   relatedAlarms: "\u76f8\u5173\u544a\u8b66",
@@ -65,11 +64,6 @@ export function HistoryPage() {
   );
 
   const headerMetrics = [
-    {
-      label: text.mode,
-      value: getModeLabel(dataSource.mode),
-      tone: dataSource.mode === "demo" ? ("warn" as const) : ("brand" as const),
-    },
     {
       label: text.points,
       value: `${tracks.length}`,

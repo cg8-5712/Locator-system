@@ -82,6 +82,10 @@ textarea {
   animation: sos-ring 1s ease-in-out infinite;
 }
 
+.person-marker__outer--fence {
+  animation: fence-ring 1.4s ease-in-out infinite;
+}
+
 .person-marker__inner {
   align-items: center;
   background: rgba(16, 33, 43, 0.92);
@@ -108,6 +112,10 @@ textarea {
   animation: pulse-ring 0.95s ease-in-out infinite;
 }
 
+.person-marker__pulse--fence {
+  animation: pulse-ring 1.2s ease-in-out infinite;
+}
+
 @keyframes pulse-ring {
   0%,
   100% {
@@ -129,5 +137,16 @@ textarea {
 
   50% {
     transform: scale(1.06);
+  }
+}
+
+@keyframes fence-ring {
+  0%,
+  100% {
+    transform: scale(0.98);
+  }
+
+  50% {
+    transform: scale(1.04);
   }
 }
