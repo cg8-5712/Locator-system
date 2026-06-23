@@ -1,6 +1,8 @@
 import { useMemo } from "react";
+import { useAlarmList } from "../../hooks/use-alarms";
 import { useDeviceDetail, useDeviceList } from "../../hooks/use-devices";
 import { useRealtime } from "../../hooks/use-realtime";
+import { useTrack } from "../../hooks/use-track";
 import { useMapStore } from "../../stores/map-store";
 import type { MapDataSource } from "./data-source";
 
@@ -27,16 +29,42 @@ function useLiveDeviceDetail(deviceSN: string | null) {
 function useLiveRealtime() {
   useRealtime();
   const wsConnected = useMapStore((state) => state.wsConnected);
+  const lastRealtimeMessage = useMapStore((state) => state.lastRealtimeMessage);
   const liveLocations = useMapStore((state) => state.liveLocations);
 
   return useMemo(
     () => ({
       connected: wsConnected,
-      lastMessage: null,
+      lastMessage: lastRealtimeMessage,
       liveLocations,
     }),
-    [liveLocations, wsConnected]
+    [lastRealtimeMessage, liveLocations, wsConnected]
   );
+}
+
+function useLiveAlarms(options?: { deviceSN?: string | null; limit?: number }) {
+  const query = useAlarmList({
+    deviceSN: options?.deviceSN ?? undefined,
+    pageSize: options?.limit ?? 50,
+  });
+
+  return {
+    alarms: query.data?.alarms ?? [],
+    isLoading: query.isLoading,
+    isError: query.isError,
+    errorMessage: query.error instanceof Error ? query.error.message : null,
+  };
+}
+
+function useLiveTrack(deviceSN: string | null, options: { rangeHours: number }) {
+  const query = useTrack(deviceSN, options.rangeHours);
+
+  return {
+    tracks: query.data?.tracks ?? [],
+    isLoading: query.isLoading,
+    isError: query.isError,
+    errorMessage: query.error instanceof Error ? query.error.message : null,
+  };
 }
 
 export const liveDataSource: MapDataSource = {
@@ -44,4 +72,6 @@ export const liveDataSource: MapDataSource = {
   useDevices: useLiveDevices,
   useDeviceDetail: useLiveDeviceDetail,
   useRealtimeFeed: useLiveRealtime,
+  useAlarms: useLiveAlarms,
+  useTrack: useLiveTrack,
 };

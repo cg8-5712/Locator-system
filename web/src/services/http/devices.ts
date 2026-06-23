@@ -1,4 +1,5 @@
 import type { DeviceListResult, DeviceSummary } from "../../types/device";
+import type { DeviceTrackResult } from "../../types/device";
 import { apiRequest } from "./client";
 
 export async function fetchDevices(params?: {
@@ -22,4 +23,28 @@ export async function fetchDevices(params?: {
 
 export async function fetchDevice(deviceSN: string) {
   return apiRequest<DeviceSummary>(`/api/devices/${deviceSN}`);
+}
+
+export async function fetchDeviceTrack(
+  deviceSN: string,
+  params: {
+    startTime?: string;
+    endTime?: string;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  const query = new URLSearchParams();
+  if (params.startTime) {
+    query.set("start_time", params.startTime);
+  }
+  if (params.endTime) {
+    query.set("end_time", params.endTime);
+  }
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 500));
+
+  return apiRequest<DeviceTrackResult>(
+    `/api/devices/${deviceSN}/tracks?${query.toString()}`
+  );
 }

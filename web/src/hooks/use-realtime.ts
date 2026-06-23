@@ -21,11 +21,13 @@ export function useRealtime() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const setWsConnected = useMapStore((state) => state.setWsConnected);
+  const setLastRealtimeMessage = useMapStore((state) => state.setLastRealtimeMessage);
   const upsertLiveLocation = useMapStore((state) => state.upsertLiveLocation);
 
   useEffect(() => {
     if (!token) {
       setWsConnected(false);
+      setLastRealtimeMessage(null);
       return;
     }
     const authToken = token;
@@ -35,6 +37,8 @@ export function useRealtime() {
     let socket: WebSocket | null = null;
 
     function applyEnvelope(message: RealtimeEnvelope) {
+      setLastRealtimeMessage(message);
+
       if (message.type === "location") {
         upsertLiveLocation(message.data.device_sn, {
           lat: message.data.lat,
@@ -149,8 +153,8 @@ export function useRealtime() {
       }
 
       if (message.type === "alarm") {
-        queryClient.setQueryData<AlarmListResult | undefined>(
-          ["recent-alarms"],
+        queryClient.setQueriesData<AlarmListResult | undefined>(
+          { queryKey: ["alarms"] },
           (current) => {
             if (!current) {
               return current;
@@ -166,7 +170,7 @@ export function useRealtime() {
                   created_at: message.data.created_at,
                 },
                 ...current.alarms,
-              ].slice(0, 10),
+              ],
             };
           }
         );
@@ -199,6 +203,7 @@ export function useRealtime() {
     return () => {
       isDisposed = true;
       setWsConnected(false);
+      setLastRealtimeMessage(null);
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }
@@ -206,5 +211,11 @@ export function useRealtime() {
         socket.close();
       }
     };
-  }, [queryClient, setWsConnected, token, upsertLiveLocation]);
+  }, [
+    queryClient,
+    setLastRealtimeMessage,
+    setWsConnected,
+    token,
+    upsertLiveLocation,
+  ]);
 }

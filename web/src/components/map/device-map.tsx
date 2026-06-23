@@ -1,19 +1,26 @@
 import { useEffect, useMemo, useRef } from "react";
 import L from "leaflet";
-import { Circle, MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
-import { getMarkerAccent } from "../../lib/status";
+import {
+  Circle,
+  MapContainer,
+  Marker,
+  Popup,
+  TileLayer,
+  useMap,
+} from "react-leaflet";
+import { getGPSStateLabel, getMarkerAccent } from "../../lib/status";
 import type { DeviceSummary } from "../../types/device";
 import type { LiveDevicePoint } from "../../features/map-view/map-types";
 
-function markerIcon(device: DeviceSummary) {
+function markerIcon(device: DeviceSummary, emergency: boolean) {
   const accent = getMarkerAccent(device);
   const label = (device.name || device.device_sn).trim().slice(0, 1).toUpperCase();
 
   return L.divIcon({
     className: "person-marker",
     html: `
-      <div class="person-marker__outer" style="background:${accent}; box-shadow:0 0 0 6px ${accent}22;">
-        <span class="person-marker__pulse" style="background:${accent}33;"></span>
+      <div class="person-marker__outer${emergency ? " person-marker__outer--sos" : ""}" style="background:${accent}; box-shadow:0 0 0 6px ${accent}22;">
+        <span class="person-marker__pulse${emergency ? " person-marker__pulse--sos" : ""}" style="background:${accent}33;"></span>
         <span class="person-marker__inner">${label || "?"}</span>
       </div>
     `,
@@ -57,7 +64,9 @@ function MapAutoFit({ points }: { points: LiveDevicePoint[] }) {
     if (points.length === 1) {
       map.setView([points[0].lat, points[0].lng], 14);
     } else {
-      const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lng] as [number, number]));
+      const bounds = L.latLngBounds(
+        points.map((point) => [point.lat, point.lng] as [number, number])
+      );
       map.fitBounds(bounds.pad(0.28));
     }
 
@@ -71,12 +80,14 @@ export function DeviceMap({
   devices,
   points,
   selectedDeviceSN,
+  emergencyDeviceSN,
   followSelected,
   onSelect,
 }: {
   devices: DeviceSummary[];
   points: LiveDevicePoint[];
   selectedDeviceSN: string | null;
+  emergencyDeviceSN?: string | null;
   followSelected: boolean;
   onSelect: (deviceSN: string) => void;
 }) {
@@ -108,31 +119,36 @@ export function DeviceMap({
           return null;
         }
 
+        const emergency = emergencyDeviceSN === device.device_sn;
+
         return (
           <Marker
             key={device.device_sn}
             position={[point.lat, point.lng]}
-            icon={markerIcon(device)}
+            icon={markerIcon(device, emergency)}
             eventHandlers={{
               click: () => onSelect(device.device_sn),
             }}
           >
             <Popup>
-              <div className="min-w-[180px] space-y-1">
+              <div className="min-w-[200px] space-y-1">
                 <div className="font-semibold text-[#10212b]">
                   {device.name || device.device_sn}
                 </div>
                 <div className="text-sm text-[#546570]">电量 {device.battery}%</div>
-                <div className="text-sm text-[#546570]">{device.gps_state || "在线"}</div>
+                <div className="text-sm text-[#546570]">
+                  {getGPSStateLabel(device.gps_state)}
+                </div>
               </div>
             </Popup>
+
             {selectedDeviceSN === device.device_sn ? (
               <Circle
                 center={[point.lat, point.lng]}
-                radius={5}
+                radius={point.accuracyMeters ?? 5}
                 pathOptions={{
-                  color: "#1f88c9",
-                  fillColor: "#1f88c9",
+                  color: emergency ? "#d94747" : "#1f88c9",
+                  fillColor: emergency ? "#d94747" : "#1f88c9",
                   fillOpacity: 0.08,
                   weight: 1,
                 }}

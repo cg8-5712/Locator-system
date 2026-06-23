@@ -1,17 +1,20 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { DeviceDetailPanel } from "../../components/map/device-detail-panel";
 import { DeviceMap } from "../../components/map/device-map";
 import { DeviceSidebar } from "../../components/map/device-sidebar";
-import { useAuth } from "../../hooks/use-auth";
-import { isValidCoordinate } from "../../lib/geo";
-import { authStore } from "../../stores/auth-store";
-import { useMapStore } from "../../stores/map-store";
+import { EmergencyBanner } from "../../components/map/emergency-banner";
+import { ShareLocationModal } from "../../components/map/share-location-modal";
+import { AppHeader } from "../../components/shell/app-header";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
-import type { LiveDevicePoint } from "../../features/map-view/map-types";
+import { buildModePath, getModeLabel } from "../../features/map-view/mode";
+import { deriveLivePoints } from "../../features/map-view/points";
+import { useMapStore } from "../../stores/map-store";
+import type { AlarmEvent } from "../../types/realtime";
 
 export function MapPage() {
+  const navigate = useNavigate();
   const dataSource = useMapDataSource();
-  const { user } = useAuth();
   const {
     selectedDeviceSN,
     searchText,
@@ -20,6 +23,8 @@ export function MapPage() {
     setSearchText,
     setFollowSelected,
   } = useMapStore();
+  const [shareOpen, setShareOpen] = useState(false);
+  const [activeSOSAlarm, setActiveSOSAlarm] = useState<AlarmEvent | null>(null);
 
   const devicesResult = dataSource.useDevices();
   const realtimeResult = dataSource.useRealtimeFeed();
@@ -40,6 +45,7 @@ export function MapPage() {
 
   const selectedSN = selectedDeviceSN ?? filteredDevices[0]?.device_sn ?? null;
   const selectedDeviceResult = dataSource.useDeviceDetail(selectedSN);
+  const selectedDevice = selectedDeviceResult.device;
 
   useEffect(() => {
     if (!selectedDeviceSN && filteredDevices[0]) {
@@ -47,89 +53,85 @@ export function MapPage() {
     }
   }, [filteredDevices, selectedDeviceSN, setSelectedDeviceSN]);
 
-  const livePoints = useMemo(() => {
-    const points: LiveDevicePoint[] = [];
-
-    for (const device of filteredDevices) {
-      const liveLocation = realtimeResult.liveLocations[device.device_sn];
-      if (liveLocation) {
-        points.push({
-          deviceSN: device.device_sn,
-          name: device.name,
-          lat: liveLocation.lat,
-          lng: liveLocation.lng,
-          battery: device.battery,
-          status: device.status,
-          gpsState: device.gps_state,
-          lastUpdate: liveLocation.time ?? device.last_online,
-        });
-        continue;
-      }
-
-      const payload = device.status_payload ?? {};
-      const lat = Number(payload.lat ?? payload.latitude);
-      const lng = Number(payload.lng ?? payload.lon ?? payload.longitude);
-      const point = {
-        deviceSN: device.device_sn,
-        name: device.name,
-        lat,
-        lng,
-        battery: device.battery,
-        status: device.status,
-        gpsState: device.gps_state,
-        lastUpdate: device.last_online,
-      };
-
-      if (isValidCoordinate(point)) {
-        points.push(point);
-      }
+  useEffect(() => {
+    if (
+      realtimeResult.lastMessage?.type === "alarm" &&
+      realtimeResult.lastMessage.data.type === "sos"
+    ) {
+      setActiveSOSAlarm(realtimeResult.lastMessage.data);
+      setSelectedDeviceSN(realtimeResult.lastMessage.data.device_sn);
+      setFollowSelected(true);
     }
+  }, [realtimeResult.lastMessage, setFollowSelected, setSelectedDeviceSN]);
 
-    return points;
-  }, [filteredDevices, realtimeResult.liveLocations]);
+  const livePoints = useMemo(
+    () => deriveLivePoints(filteredDevices, realtimeResult.liveLocations),
+    [filteredDevices, realtimeResult.liveLocations]
+  );
 
-  const modeLabel = dataSource.mode === "demo" ? "死数据验证" : "后端联调";
+  const deviceNameBySN = useMemo(
+    () =>
+      new Map(
+        devices.map((device) => [device.device_sn, device.name || device.device_sn] as const)
+      ),
+    [devices]
+  );
+
+  const headerMetrics = [
+    {
+      label: "模式",
+      value: getModeLabel(dataSource.mode),
+      tone: dataSource.mode === "demo" ? ("warn" as const) : ("brand" as const),
+    },
+    {
+      label: "在线",
+      value: `${devices.filter((item) => item.status !== 0).length}`,
+    },
+    {
+      label: "总人数",
+      value: `${devices.length}`,
+    },
+    {
+      label: "实时通道",
+      value: realtimeResult.connected ? "已连接" : "未连接",
+      tone: realtimeResult.connected ? ("brand" as const) : ("warn" as const),
+    },
+  ];
 
   return (
     <main className="min-h-screen p-4 md:p-5">
-      <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4">
-        <header className="glass-panel flex flex-col gap-4 rounded-[28px] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#1f88c9]">
-              Locator Hub
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#10212b]">
-              团队位置管理系统
-            </h1>
-          </div>
+      {activeSOSAlarm ? (
+        <EmergencyBanner
+          alarm={activeSOSAlarm}
+          deviceName={deviceNameBySN.get(activeSOSAlarm.device_sn) ?? activeSOSAlarm.device_sn}
+          onLocate={() => {
+            setSelectedDeviceSN(activeSOSAlarm.device_sn);
+            setFollowSelected(true);
+          }}
+          onHistory={() =>
+            navigate(
+              buildModePath(dataSource.mode, `/devices/${activeSOSAlarm.device_sn}/history`)
+            )
+          }
+          onDismiss={() => setActiveSOSAlarm(null)}
+        />
+      ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <TopMetric
-              label="模式"
-              value={modeLabel}
-              tone={dataSource.mode === "demo" ? "warn" : "brand"}
-            />
-            <TopMetric
-              label="在线"
-              value={`${devices.filter((item) => item.status !== 0).length}`}
-            />
-            <TopMetric label="总人数" value={`${devices.length}`} />
-            <TopMetric label="当前用户" value={user?.username ?? "演示访客"} />
-            <TopMetric
-              label="实时通道"
-              value={realtimeResult.connected ? "已连接" : "未连接"}
-            />
-            {dataSource.mode === "live" ? (
-              <button
-                type="button"
-                onClick={() => authStore.getState().clearSession()}
-                className="rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:bg-white"
-              >
-                退出登录
-              </button>
-            ) : null}
-          </div>
-        </header>
+      <ShareLocationModal
+        open={shareOpen}
+        mode={dataSource.mode}
+        device={selectedDevice}
+        onClose={() => setShareOpen(false)}
+      />
+
+      <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4">
+        <AppHeader
+          mode={dataSource.mode}
+          title="团队位置管理系统"
+          description="共用一套 React + TypeScript + Tailwind CSS 页面，通过 demo/live 数据源切换完成死数据验证与真实后端联调。"
+          metrics={headerMetrics}
+          active="map"
+        />
 
         <section className="grid min-h-0 gap-4 xl:grid-cols-[340px_minmax(0,1fr)_360px]">
           <DeviceSidebar
@@ -174,6 +176,7 @@ export function MapPage() {
                   devices={filteredDevices}
                   points={livePoints}
                   selectedDeviceSN={selectedSN}
+                  emergencyDeviceSN={activeSOSAlarm?.device_sn ?? null}
                   followSelected={followSelected}
                   onSelect={(deviceSN) => {
                     setSelectedDeviceSN(deviceSN);
@@ -184,35 +187,13 @@ export function MapPage() {
             </div>
           </div>
 
-          <DeviceDetailPanel device={selectedDeviceResult.device} />
+          <DeviceDetailPanel
+            device={selectedDevice}
+            mode={dataSource.mode}
+            onOpenShare={() => setShareOpen(true)}
+          />
         </section>
       </div>
     </main>
-  );
-}
-
-function TopMetric({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  tone?: "default" | "brand" | "warn";
-}) {
-  const toneClassName =
-    tone === "brand"
-      ? "border-[#1f88c9]/18 bg-[#1f88c9]/8"
-      : tone === "warn"
-        ? "border-[#d48a1f]/18 bg-[#d48a1f]/10"
-        : "border-black/6 bg-white/66";
-
-  return (
-    <div className={`rounded-2xl border px-4 py-2.5 ${toneClassName}`}>
-      <div className="text-[11px] uppercase tracking-[0.18em] text-[#7a8a94]">
-        {label}
-      </div>
-      <div className="mt-1 text-sm font-semibold text-[#10212b]">{value}</div>
-    </div>
   );
 }

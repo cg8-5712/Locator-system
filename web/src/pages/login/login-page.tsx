@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { login } from "../../services/http/auth";
 import { authStore } from "../../stores/auth-store";
@@ -44,9 +44,10 @@ export function LoginPage() {
                 人员定位与安全管理工作台
               </h1>
               <p className="mt-6 max-w-md text-base leading-7 text-white/72">
-                面向外勤、巡检、安保和现场作业团队的实时位置、围栏与安全响应系统。
+                面向外勤、巡检、安保和现场作业团队的实时位置、围栏、告警与安全响应系统。
               </p>
             </div>
+
             <div className="relative grid grid-cols-3 gap-4 text-sm text-white/78">
               <div className="rounded-3xl border border-white/10 bg-white/8 p-4">
                 <div className="text-2xl font-semibold text-white">实时</div>
@@ -58,7 +59,7 @@ export function LoginPage() {
               </div>
               <div className="rounded-3xl border border-white/10 bg-white/8 p-4">
                 <div className="text-2xl font-semibold text-white">SOS</div>
-                <div className="mt-2">面向人员安全的响应优先级</div>
+                <div className="mt-2">面向人员安全的全局告警响应</div>
               </div>
             </div>
           </div>
@@ -72,7 +73,8 @@ export function LoginPage() {
                 进入调度台
               </h2>
               <p className="mt-4 text-sm leading-7 text-[#546570]">
-                当前版本已接通后端登录、设备列表和实时通道基础结构。若仅想验证界面交互，可以直接进入
+                当前版本已经接通后端登录、设备列表和实时通道。
+                如果你只是想先验证界面交互，可以直接进入
                 <Link className="ml-1 font-semibold text-[#1f88c9]" to="/demo/map">
                   死数据验证模式
                 </Link>

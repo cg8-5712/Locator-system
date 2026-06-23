@@ -7,6 +7,7 @@ export interface LiveDevicePoint {
   status: number;
   gpsState: string;
   lastUpdate?: string;
+  accuracyMeters?: number;
 }
 
 export type LiveLocationState = Record<

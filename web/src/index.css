@@ -78,6 +78,10 @@ textarea {
   width: 48px;
 }
 
+.person-marker__outer--sos {
+  animation: sos-ring 1s ease-in-out infinite;
+}
+
 .person-marker__inner {
   align-items: center;
   background: rgba(16, 33, 43, 0.92);
@@ -100,6 +104,10 @@ textarea {
   position: absolute;
 }
 
+.person-marker__pulse--sos {
+  animation: pulse-ring 0.95s ease-in-out infinite;
+}
+
 @keyframes pulse-ring {
   0%,
   100% {
@@ -110,5 +118,16 @@ textarea {
   50% {
     opacity: 0.75;
     transform: scale(1.04);
+  }
+}
+
+@keyframes sos-ring {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+
+  50% {
+    transform: scale(1.06);
   }
 }

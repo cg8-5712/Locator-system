@@ -1,9 +1,13 @@
+import { useNavigate } from "react-router-dom";
 import { BatteryBadge } from "../status/battery-badge";
 import { StatusBadge } from "../status/status-badge";
+import { buildModePath } from "../../features/map-view/mode";
+import type { AppMode } from "../../features/map-view/mode";
+import { getActivityLabel, getGPSStateLabel } from "../../lib/status";
 import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import type { DeviceSummary } from "../../types/device";
 
-function renderConfigValue(value: unknown): string {
+function renderValue(value: unknown): string {
   if (typeof value === "number" || typeof value === "string") {
     return String(value);
   }
@@ -11,16 +15,31 @@ function renderConfigValue(value: unknown): string {
   return "--";
 }
 
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function DeviceDetailPanel({
   device,
+  mode,
+  onOpenShare,
 }: {
   device: DeviceSummary | null;
+  mode: AppMode;
+  onOpenShare: () => void;
 }) {
+  const navigate = useNavigate();
+
   if (!device) {
     return (
       <section className="glass-panel flex h-full items-center justify-center rounded-[28px] p-6">
         <div className="max-w-sm text-center text-sm leading-7 text-[#546570]">
-          选择一名人员后，可查看实时状态、设备信息、最近可信定位时间和当前生效配置摘要。
+          选中某个人员后，这里会显示实时状态、设备信息、最近可信定位时间和当前生效配置摘要。
         </div>
       </section>
     );
@@ -28,6 +47,11 @@ export function DeviceDetailPanel({
 
   const statusPayload = device.status_payload ?? {};
   const configPayload = device.config_payload ?? {};
+  const role = readString(statusPayload.role);
+  const address = readString(statusPayload.address);
+  const activity = getActivityLabel(statusPayload.activity);
+  const speedKmh = readNumber(statusPayload.speed_kmh);
+  const accuracyMeters = readNumber(statusPayload.accuracy_m ?? statusPayload.accuracy);
 
   return (
     <section className="glass-panel h-full rounded-[28px] p-5">
@@ -39,7 +63,9 @@ export function DeviceDetailPanel({
           <h3 className="mt-2 text-2xl font-semibold text-[#10212b]">
             {device.name || device.device_sn}
           </h3>
-          <p className="mt-1 text-sm text-[#546570]">{device.device_sn}</p>
+          <p className="mt-1 text-sm text-[#546570]">
+            {role ? `${role} · ${device.device_sn}` : device.device_sn}
+          </p>
         </div>
         <StatusBadge device={device} />
       </div>
@@ -47,8 +73,14 @@ export function DeviceDetailPanel({
       <div className="mt-5 flex flex-wrap gap-2">
         <BatteryBadge value={device.battery} />
         <span className="inline-flex rounded-full bg-[#10212b]/6 px-2.5 py-1 text-xs font-semibold text-[#3e505a]">
-          GPS {device.gps_state || "未知"}
+          GPS {getGPSStateLabel(device.gps_state)}
         </span>
+        {activity ? (
+          <span className="inline-flex rounded-full bg-[#1f88c9]/8 px-2.5 py-1 text-xs font-semibold text-[#1b628a]">
+            {activity}
+            {speedKmh ? ` · ${speedKmh.toFixed(1)} km/h` : ""}
+          </span>
+        ) : null}
       </div>
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
@@ -60,56 +92,63 @@ export function DeviceDetailPanel({
 
       <div className="mt-6 space-y-6">
         <section>
+          <h4 className="text-sm font-semibold text-[#10212b]">现场状态</h4>
+          <dl className="mt-3 grid gap-3 text-sm text-[#546570]">
+            <DetailRow label="当前位置" value={address ?? "--"} />
+            <DetailRow
+              label="定位精度"
+              value={accuracyMeters ? `${accuracyMeters} 米` : "--"}
+            />
+            <DetailRow label="网络注册" value={renderValue(statusPayload.net)} />
+            <DetailRow label="模块固件" value={renderValue(statusPayload.fw)} />
+            <DetailRow label="构建版本" value={renderValue(statusPayload.build)} />
+          </dl>
+        </section>
+
+        <section>
           <h4 className="text-sm font-semibold text-[#10212b]">设备信息</h4>
           <dl className="mt-3 grid gap-3 text-sm text-[#546570]">
             <DetailRow label="IMEI" value={device.imei || "--"} />
             <DetailRow label="ICCID" value={device.iccid || "--"} />
-            <DetailRow
-              label="模块固件"
-              value={renderConfigValue(statusPayload.fw)}
-            />
-            <DetailRow
-              label="网络注册"
-              value={renderConfigValue(statusPayload.net)}
-            />
-            <DetailRow
-              label="设备构建"
-              value={renderConfigValue(statusPayload.build)}
-            />
+            <DetailRow label="MQTT 在线" value={renderValue(statusPayload.mqtt)} />
+            <DetailRow label="启动完成" value={renderValue(statusPayload.startup)} />
+            <DetailRow label="健康检查" value={renderValue(statusPayload.health)} />
           </dl>
         </section>
 
         <section>
           <h4 className="text-sm font-semibold text-[#10212b]">生效配置摘要</h4>
           <dl className="mt-3 grid gap-3 text-sm text-[#546570]">
-            <DetailRow
-              label="上报周期"
-              value={`${renderConfigValue(configPayload.pub_ms)} ms`}
-            />
-            <DetailRow
-              label="移动阈值"
-              value={`${renderConfigValue(configPayload.move_m)} m`}
-            />
+            <DetailRow label="上报周期" value={`${renderValue(configPayload.pub_ms)} ms`} />
+            <DetailRow label="移动阈值" value={`${renderValue(configPayload.move_m)} m`} />
             <DetailRow
               label="静止确认"
-              value={`${renderConfigValue(configPayload.still_confirm_ms)} ms`}
+              value={`${renderValue(configPayload.still_confirm_ms)} ms`}
             />
             <DetailRow
               label="无定位保活"
-              value={`${renderConfigValue(configPayload.nofix_keepalive_ms)} ms`}
+              value={`${renderValue(configPayload.nofix_keepalive_ms)} ms`}
             />
             <DetailRow
               label="远程配置"
-              value={renderConfigValue(configPayload.remote_cfg)}
+              value={renderValue(configPayload.remote_cfg)}
             />
           </dl>
         </section>
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        <ActionButton>历史轨迹</ActionButton>
-        <ActionButton>查看围栏</ActionButton>
-        <ActionButton tone="dark">分享实时位置</ActionButton>
+        <ActionButton
+          onClick={() =>
+            navigate(buildModePath(mode, `/devices/${device.device_sn}/history`))
+          }
+        >
+          历史轨迹
+        </ActionButton>
+        <ActionButton disabled>查看围栏</ActionButton>
+        <ActionButton tone="dark" onClick={onOpenShare}>
+          分享实时位置
+        </ActionButton>
       </div>
     </section>
   );
@@ -136,17 +175,23 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 function ActionButton({
   children,
   tone = "light",
+  onClick,
+  disabled = false,
 }: {
   children: string;
   tone?: "light" | "dark";
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      onClick={onClick}
       className={
         tone === "dark"
-          ? "rounded-2xl bg-[#10212b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#163445]"
-          : "rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:border-[#1f88c9]/20 hover:bg-white"
+          ? "rounded-2xl bg-[#10212b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#163445] disabled:cursor-not-allowed disabled:opacity-50"
+          : "rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:border-[#1f88c9]/20 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
       }
     >
       {children}
