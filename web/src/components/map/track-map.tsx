@@ -5,11 +5,11 @@ import {
   MapContainer,
   Polyline,
   Popup,
-  TileLayer,
   useMap,
 } from "react-leaflet";
 import type { TrackPoint } from "../../types/device";
 import { formatDateTime, formatDurationSeconds } from "../../lib/time";
+import { AppTileLayer } from "./app-tile-layer";
 
 function FitTrackBounds({ tracks }: { tracks: TrackPoint[] }) {
   const map = useMap();
@@ -59,10 +59,7 @@ export function TrackMap({
       className="h-full w-full rounded-[28px]"
       zoomControl={false}
     >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
+      <AppTileLayer />
 
       <FitTrackBounds tracks={tracks} />
 

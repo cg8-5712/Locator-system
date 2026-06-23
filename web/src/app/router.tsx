@@ -11,6 +11,7 @@ import { MapPage } from "../pages/map/map-page";
 import { AlarmsPage } from "../pages/alarms/alarms-page";
 import { HistoryPage } from "../pages/history/history-page";
 import { DemoSharePage } from "../pages/share/demo-share-page";
+import { SharesPage } from "../pages/share/shares-page";
 
 function withDataSource(dataSource: MapDataSource, element: ReactNode) {
   return <MapDataProvider value={dataSource}>{element}</MapDataProvider>;
@@ -33,6 +34,10 @@ export const appRouter = createBrowserRouter([
         element: withDataSource(demoDataSource, <AlarmsPage />),
       },
       {
+        path: "demo/shares",
+        element: withDataSource(demoDataSource, <SharesPage />),
+      },
+      {
         path: "demo/devices/:deviceSN/history",
         element: withDataSource(demoDataSource, <HistoryPage />),
       },
@@ -52,6 +57,10 @@ export const appRouter = createBrowserRouter([
           {
             path: "alarms",
             element: withDataSource(liveDataSource, <AlarmsPage />),
+          },
+          {
+            path: "shares",
+            element: withDataSource(liveDataSource, <SharesPage />),
           },
           {
             path: "devices/:deviceSN/history",

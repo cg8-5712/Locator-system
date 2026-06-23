@@ -4,6 +4,7 @@ import { DeviceDetailPanel } from "../../components/map/device-detail-panel";
 import { DeviceMap } from "../../components/map/device-map";
 import { DeviceSidebar } from "../../components/map/device-sidebar";
 import { EmergencyBanner } from "../../components/map/emergency-banner";
+import { MapStyleSwitcher } from "../../components/map/map-style-switcher";
 import { ShareLocationModal } from "../../components/map/share-location-modal";
 import { AppHeader } from "../../components/shell/app-header";
 import { buildMapDecorations } from "../../features/map-view/map-decorations";
@@ -186,6 +187,10 @@ export function MapPage() {
                 <div className="rounded-full bg-white/90 px-4 py-2 text-xs font-semibold text-[#10212b] shadow-sm">
                   {text.livePoints} {livePoints.length}
                 </div>
+              </div>
+
+              <div className="absolute bottom-4 left-4 right-4 z-[1000]">
+                <MapStyleSwitcher compact />
               </div>
 
               {devicesResult.isError ? (

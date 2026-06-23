@@ -5,12 +5,12 @@ import {
   MapContainer,
   Marker,
   Popup,
-  TileLayer,
   useMap,
 } from "react-leaflet";
 import { getGPSStateLabel, getMarkerAccent } from "../../lib/status";
 import type { DeviceSummary } from "../../types/device";
 import type { GeofenceOverlay, LiveDevicePoint } from "../../features/map-view/map-types";
+import { AppTileLayer } from "./app-tile-layer";
 
 function markerIcon(
   device: DeviceSummary,
@@ -135,10 +135,7 @@ export function DeviceMap({
       className="h-full w-full rounded-[28px]"
       zoomControl={false}
     >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
+      <AppTileLayer />
 
       <MapAutoFit points={points} />
       <MapFollower

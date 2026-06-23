@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import L from "leaflet";
-import { Circle, MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
+import { Circle, MapContainer, Marker, Popup } from "react-leaflet";
+import { AppTileLayer } from "../../components/map/app-tile-layer";
+import { MapStyleSwitcher } from "../../components/map/map-style-switcher";
 import { mockDevices } from "../../features/map-view/mock-devices";
 import { getActivityLabel, getGPSStateLabel, getMarkerAccent } from "../../lib/status";
 import { formatRelativeTime } from "../../lib/time";
@@ -53,7 +55,6 @@ const text = {
 
 export function DemoSharePage() {
   const { deviceSN } = useParams<{ deviceSN: string }>();
-  const [darkMap, setDarkMap] = useState(false);
 
   const device = mockDevices.find((item) => item.device_sn === deviceSN) ?? null;
   const payload = device?.status_payload ?? {};
@@ -106,33 +107,22 @@ export function DemoSharePage() {
                 {text.expiresValue}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setDarkMap((current) => !current)}
-              className="rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:bg-white"
-            >
-              {darkMap ? text.lightMap : text.darkMap}
-            </button>
           </div>
         </header>
 
         <section className="glass-panel overflow-hidden rounded-[28px] p-3">
           <div className="grid min-h-[560px] gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="overflow-hidden rounded-[24px] bg-[#dce9ef]">
+            <div className="relative overflow-hidden rounded-[24px] bg-[#dce9ef]">
+              <div className="absolute bottom-4 left-4 right-4 z-[1000]">
+                <MapStyleSwitcher compact />
+              </div>
               <MapContainer
                 center={[lat, lng]}
                 zoom={16}
                 className="h-full w-full"
                 zoomControl={false}
               >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                  url={
-                    darkMap
-                      ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                      : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  }
-                />
+                <AppTileLayer />
                 <Marker position={[lat, lng]} icon={marker}>
                   <Popup>
                     <div className="space-y-1">

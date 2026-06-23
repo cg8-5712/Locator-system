@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { MapStyleSwitcher } from "../../components/map/map-style-switcher";
 import { TrackMap } from "../../components/map/track-map";
 import { AppHeader } from "../../components/shell/app-header";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
@@ -135,12 +136,17 @@ export function HistoryPage() {
                     {text.empty}
                   </div>
                 ) : (
-                  <TrackMap
-                    deviceName={deviceName}
-                    tracks={tracks}
-                    selectedTrackTime={selectedTrackTime}
-                    onSelectTrack={setSelectedTrackTime}
-                  />
+                  <div className="relative h-full">
+                    <div className="absolute bottom-4 left-4 right-4 z-[1000]">
+                      <MapStyleSwitcher compact />
+                    </div>
+                    <TrackMap
+                      deviceName={deviceName}
+                      tracks={tracks}
+                      selectedTrackTime={selectedTrackTime}
+                      onSelectTrack={setSelectedTrackTime}
+                    />
+                  </div>
                 )}
               </div>
             </div>

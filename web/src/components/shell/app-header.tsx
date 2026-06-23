@@ -19,6 +19,7 @@ const text = {
   logout: "\u9000\u51fa\u767b\u5f55",
   map: "\u5730\u56fe\u603b\u89c8",
   alarms: "\u544a\u8b66\u4e2d\u5fc3",
+  shares: "\u5206\u4eab\u7ba1\u7406",
 };
 
 export function AppHeader({
@@ -33,7 +34,7 @@ export function AppHeader({
   title: string;
   description?: string;
   metrics: HeaderMetric[];
-  active: "map" | "alarms" | "history";
+  active: "map" | "alarms" | "history" | "shares";
   children?: ReactNode;
 }) {
   const { user } = useAuth();
@@ -92,6 +93,12 @@ export function AppHeader({
             active={active === "alarms"}
           >
             {text.alarms}
+          </ModeNavItem>
+          <ModeNavItem
+            to={buildModePath(mode, "/shares")}
+            active={active === "shares"}
+          >
+            {text.shares}
           </ModeNavItem>
         </nav>
         {children ? <div className="flex flex-wrap items-center gap-2">{children}</div> : null}
