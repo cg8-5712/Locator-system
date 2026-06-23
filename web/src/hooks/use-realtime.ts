@@ -28,6 +28,7 @@ export function useRealtime() {
       setWsConnected(false);
       return;
     }
+    const authToken = token;
 
     let reconnectTimer: number | undefined;
     let isDisposed = false;
@@ -173,7 +174,7 @@ export function useRealtime() {
     }
 
     function openSocket() {
-      socket = connectRealtime(token, {
+      socket = connectRealtime(authToken, {
         onMessage: applyEnvelope,
         onOpen: () => {
           setWsConnected(true);
@@ -201,7 +202,9 @@ export function useRealtime() {
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }
-      socket?.close();
+      if (socket) {
+        socket.close();
+      }
     };
   }, [queryClient, setWsConnected, token, upsertLiveLocation]);
 }

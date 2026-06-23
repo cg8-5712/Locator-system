@@ -49,40 +49,45 @@ export function MapPage() {
     }
   }, [filteredDevices, selectedDeviceSN, setSelectedDeviceSN]);
 
-  const livePoints = useMemo<LiveDevicePoint[]>(() => {
-    return filteredDevices
-      .map((device) => {
-        const liveLocation = liveLocations[device.device_sn];
-        if (liveLocation) {
-          return {
-            deviceSN: device.device_sn,
-            name: device.name,
-            lat: liveLocation.lat,
-            lng: liveLocation.lng,
-            battery: device.battery,
-            status: device.status,
-            gpsState: device.gps_state,
-            lastUpdate: liveLocation.time ?? device.last_online,
-          };
-        }
+  const livePoints = useMemo(() => {
+    const points: LiveDevicePoint[] = [];
 
-        const payload = device.status_payload ?? {};
-        const lat = Number(payload.lat ?? payload.latitude);
-        const lng = Number(payload.lng ?? payload.lon ?? payload.longitude);
-        const point = {
+    for (const device of filteredDevices) {
+      const liveLocation = liveLocations[device.device_sn];
+      if (liveLocation) {
+        points.push({
           deviceSN: device.device_sn,
           name: device.name,
-          lat,
-          lng,
+          lat: liveLocation.lat,
+          lng: liveLocation.lng,
           battery: device.battery,
           status: device.status,
           gpsState: device.gps_state,
-          lastUpdate: device.last_online,
-        };
+          lastUpdate: liveLocation.time ?? device.last_online,
+        });
+        continue;
+      }
 
-        return isValidCoordinate(point) ? point : null;
-      })
-      .filter((point): point is LiveDevicePoint => point !== null);
+      const payload = device.status_payload ?? {};
+      const lat = Number(payload.lat ?? payload.latitude);
+      const lng = Number(payload.lng ?? payload.lon ?? payload.longitude);
+      const point = {
+        deviceSN: device.device_sn,
+        name: device.name,
+        lat,
+        lng,
+        battery: device.battery,
+        status: device.status,
+        gpsState: device.gps_state,
+        lastUpdate: device.last_online,
+      };
+
+      if (isValidCoordinate(point)) {
+        points.push(point);
+      }
+    }
+
+    return points;
   }, [filteredDevices, liveLocations]);
 
   return (
