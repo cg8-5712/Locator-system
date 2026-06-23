@@ -117,7 +117,7 @@ export function MapPage() {
   ];
 
   return (
-    <main className="min-h-screen p-4 md:p-5">
+    <main className="min-h-screen p-4 md:p-5 xl:h-screen xl:overflow-hidden">
       {activeSOSAlarm ? (
         <EmergencyBanner
           alarm={activeSOSAlarm}
@@ -143,7 +143,7 @@ export function MapPage() {
         onClose={() => setShareOpen(false)}
       />
 
-      <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4">
+      <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4 xl:h-full xl:min-h-0">
         <AppHeader
           mode={dataSource.mode}
           title={text.title}
@@ -151,7 +151,7 @@ export function MapPage() {
           active="map"
         />
 
-        <section className="grid min-h-0 gap-4 xl:grid-cols-[340px_minmax(0,1fr)_360px]">
+        <section className="grid min-h-0 gap-4 xl:h-full xl:grid-cols-[340px_minmax(0,1fr)_360px]">
           <DeviceSidebar
             devices={filteredDevices}
             selectedDeviceSN={selectedSN}
@@ -164,8 +164,8 @@ export function MapPage() {
             }}
           />
 
-          <div className="glass-panel min-h-[500px] overflow-hidden rounded-[28px] p-3">
-            <div className="relative h-full min-h-[470px] rounded-[24px] bg-[#dce9ef]">
+          <div className="glass-panel min-h-[500px] overflow-hidden rounded-[28px] p-3 xl:h-full xl:min-h-0">
+            <div className="relative h-full min-h-[470px] rounded-[24px] bg-[#dce9ef] xl:min-h-0">
               <div className="absolute left-4 top-4 z-[1000] flex flex-wrap gap-2">
                 <button
                   type="button"
