@@ -37,11 +37,20 @@ const (
 	statusOffline = 0
 )
 
+type TrackPersistConfig struct {
+	MinDistanceMeters float64
+	MinHeadingChange  float64
+	ForceInterval     time.Duration
+	ForceOnFenceAlarm bool
+	ForceOnSOSAlarm   bool
+}
+
 type MQTTMessageProcessor struct {
-	db         *gorm.DB
-	logger     *slog.Logger
-	realtime   RealtimePublisher
-	alarmRules *AlarmRuleService
+	db            *gorm.DB
+	logger        *slog.Logger
+	realtime      RealtimePublisher
+	alarmRules    *AlarmRuleService
+	trackPersist  TrackPersistConfig
 }
 
 type deviceTopic struct {
@@ -66,7 +75,28 @@ func NewMQTTMessageProcessor(db *gorm.DB, logger *slog.Logger) *MQTTMessageProce
 	return &MQTTMessageProcessor{
 		db:     db,
 		logger: logger,
+		trackPersist: TrackPersistConfig{
+			MinDistanceMeters: 40,
+			MinHeadingChange:  30,
+			ForceInterval:     3 * time.Minute,
+			ForceOnFenceAlarm: true,
+			ForceOnSOSAlarm:   true,
+		},
 	}
+}
+
+func (p *MQTTMessageProcessor) SetTrackPersistConfig(cfg TrackPersistConfig) {
+	if cfg.MinDistanceMeters < 0 {
+		cfg.MinDistanceMeters = 0
+	}
+	if cfg.MinHeadingChange < 0 {
+		cfg.MinHeadingChange = 0
+	}
+	if cfg.ForceInterval < 0 {
+		cfg.ForceInterval = 0
+	}
+
+	p.trackPersist = cfg
 }
 
 func (p *MQTTMessageProcessor) SetRealtimePublisher(publisher RealtimePublisher) {
@@ -173,6 +203,10 @@ func (p *MQTTMessageProcessor) handleLegacyGPS(ctx context.Context, topic device
 		updates := buildDeviceUpdates(payload, topic, message.ReceivedAt)
 		updates["gps_state"] = "located"
 		updates["last_fix_at"] = gpsTime.UTC()
+		updates["last_latitude"] = latitude
+		updates["last_longitude"] = longitude
+		updates["last_location_at"] = gpsTime.UTC()
+		updates["last_still_seconds"] = 0
 		if err := updateDevice(tx, device.ID, updates); err != nil {
 			return err
 		}
@@ -241,31 +275,45 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 				return parseErr
 			}
 
-			record := model.GPSRecord{
-				DeviceID:     device.ID,
-				Latitude:     location.Latitude,
-				Longitude:    location.Longitude,
-				GPSTime:      location.GPSTime.UTC(),
-				StillSeconds: 0,
-			}
-			if err := tx.Create(&record).Error; err != nil {
-				return fmt.Errorf("create compact gps record: %w", err)
-			}
-
 			updates["gps_state"] = "located"
 			updates["last_fix_at"] = location.GPSTime.UTC()
 			updates["status"] = statusOnline
+			updates["last_latitude"] = location.Latitude
+			updates["last_longitude"] = location.Longitude
+			updates["last_location_at"] = location.GPSTime.UTC()
+			updates["last_still_seconds"] = 0
+
+			recentPersisted, err := loadRecentGPSRecords(tx, device.ID, 2)
+			if err != nil {
+				return err
+			}
 
 			if err := updateDevice(tx, device.ID, updates); err != nil {
 				return err
 			}
 
-			updatedDevice, err := loadDeviceByID(tx, device.ID)
+			alarmEvents, err = processFenceTransitions(ctx, tx, p.alarmRules, device.ID, topic.DeviceSN, location.Latitude, location.Longitude, location.GPSTime.UTC())
 			if err != nil {
 				return err
 			}
 
-			alarmEvents, err = processFenceTransitions(ctx, tx, p.alarmRules, device.ID, topic.DeviceSN, location.Latitude, location.Longitude, location.GPSTime.UTC())
+			forcePersist := p.shouldForcePersistOnAlarm(tx, device.ID, location.GPSTime.UTC(), alarmEvents)
+			shouldPersist := forcePersist || shouldPersistCompactLocation(p.trackPersist, recentPersisted, location)
+
+			if shouldPersist {
+				record := model.GPSRecord{
+					DeviceID:     device.ID,
+					Latitude:     location.Latitude,
+					Longitude:    location.Longitude,
+					GPSTime:      location.GPSTime.UTC(),
+					StillSeconds: 0,
+				}
+				if err := tx.Create(&record).Error; err != nil {
+					return fmt.Errorf("create compact gps record: %w", err)
+				}
+			}
+
+			updatedDevice, err := loadDeviceByID(tx, device.ID)
 			if err != nil {
 				return err
 			}
@@ -290,13 +338,14 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 				return parseErr
 			}
 
-			record, err := extendLastStationaryRecord(tx, device.ID, stillSeconds)
+			record, err := extendLastStationaryRecord(tx, device, stillSeconds)
 			if err != nil {
 				return err
 			}
 
 			updates["gps_state"] = "located"
 			updates["status"] = statusOnline
+			updates["last_still_seconds"] = stillSeconds
 			if err := updateDevice(tx, device.ID, updates); err != nil {
 				return err
 			}
@@ -307,7 +356,18 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 			}
 
 			statusEvent = buildDeviceStatusEvent(*updatedDevice)
-			if record != nil {
+			if updatedDevice.LastLatitude != nil && updatedDevice.LastLongitude != nil && updatedDevice.LastLocationAt != nil {
+				locationEvent = &LocationEvent{
+					DeviceSN:     topic.DeviceSN,
+					TopicPrefix:  updatedDevice.TopicPrefix,
+					Latitude:     *updatedDevice.LastLatitude,
+					Longitude:    *updatedDevice.LastLongitude,
+					Time:         updatedDevice.LastLocationAt.UTC(),
+					StillSeconds: stillSeconds,
+					GPSState:     updatedDevice.GPSState,
+					Status:       updatedDevice.Status,
+				}
+			} else if record != nil {
 				locationEvent = &LocationEvent{
 					DeviceSN:     topic.DeviceSN,
 					TopicPrefix:  updatedDevice.TopicPrefix,
@@ -324,6 +384,7 @@ func (p *MQTTMessageProcessor) handleCompactLocation(ctx context.Context, topic 
 		case raw == "Z:0":
 			updates["gps_state"] = "unable"
 			updates["status"] = statusOnline
+			updates["last_still_seconds"] = 0
 			if err := updateDevice(tx, device.ID, updates); err != nil {
 				return err
 			}
@@ -718,18 +779,62 @@ func parseStillSeconds(raw string) (int, error) {
 	return seconds, nil
 }
 
-func extendLastStationaryRecord(tx *gorm.DB, deviceID uint64, stillSeconds int) (*model.GPSRecord, error) {
-	var record model.GPSRecord
+func loadLatestGPSRecord(tx *gorm.DB, deviceID uint64) (*model.GPSRecord, error) {
+	records, err := loadRecentGPSRecords(tx, deviceID, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+
+	return &records[0], nil
+}
+
+func loadRecentGPSRecords(tx *gorm.DB, deviceID uint64, limit int) ([]model.GPSRecord, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	var records []model.GPSRecord
 	if err := tx.
 		Where("device_id = ?", deviceID).
 		Order("gps_time DESC").
 		Order("id DESC").
-		Take(&record).Error; err != nil {
+		Limit(limit).
+		Find(&records).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 
-		return nil, fmt.Errorf("load last gps record for device %d: %w", deviceID, err)
+		return nil, fmt.Errorf("load recent gps records for device %d: %w", deviceID, err)
+	}
+
+	return records, nil
+}
+
+func extendLastStationaryRecord(tx *gorm.DB, device *model.Device, stillSeconds int) (*model.GPSRecord, error) {
+	record, err := loadLatestGPSRecord(tx, device.ID)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		if device.LastLatitude == nil || device.LastLongitude == nil || device.LastLocationAt == nil {
+			return nil, nil
+		}
+
+		record = &model.GPSRecord{
+			DeviceID:     device.ID,
+			Latitude:     *device.LastLatitude,
+			Longitude:    *device.LastLongitude,
+			GPSTime:      device.LastLocationAt.UTC(),
+			StillSeconds: stillSeconds,
+		}
+		if err := tx.Create(record).Error; err != nil {
+			return nil, fmt.Errorf("create stationary anchor record for device %d: %w", device.ID, err)
+		}
+
+		return record, nil
 	}
 
 	if err := tx.Model(&model.GPSRecord{}).
@@ -739,7 +844,61 @@ func extendLastStationaryRecord(tx *gorm.DB, deviceID uint64, stillSeconds int) 
 	}
 
 	record.StillSeconds = stillSeconds
-	return &record, nil
+	return record, nil
+}
+
+func shouldPersistCompactLocation(cfg TrackPersistConfig, recent []model.GPSRecord, current fullLocationPayload) bool {
+	if len(recent) == 0 {
+		return true
+	}
+
+	latest := recent[0]
+	distanceMeters := geo.DistanceMeters(latest.Latitude, latest.Longitude, current.Latitude, current.Longitude)
+	if cfg.MinDistanceMeters <= 0 || distanceMeters >= cfg.MinDistanceMeters {
+		return true
+	}
+
+	if cfg.ForceInterval <= 0 || current.GPSTime.UTC().Sub(latest.GPSTime.UTC()) >= cfg.ForceInterval {
+		return true
+	}
+
+	if cfg.MinHeadingChange <= 0 || len(recent) < 2 {
+		return false
+	}
+
+	previous := recent[1]
+	previousBearingDistance := geo.DistanceMeters(previous.Latitude, previous.Longitude, latest.Latitude, latest.Longitude)
+	if previousBearingDistance < 1 {
+		return false
+	}
+
+	previousBearing := geo.BearingDegrees(previous.Latitude, previous.Longitude, latest.Latitude, latest.Longitude)
+	currentBearing := geo.BearingDegrees(latest.Latitude, latest.Longitude, current.Latitude, current.Longitude)
+	headingDelta := smallestAngleDelta(previousBearing, currentBearing)
+	return headingDelta >= cfg.MinHeadingChange
+}
+
+func smallestAngleDelta(a float64, b float64) float64 {
+	delta := math.Mod(math.Abs(a-b), 360)
+	if delta > 180 {
+		return 360 - delta
+	}
+
+	return delta
+}
+
+func (p *MQTTMessageProcessor) shouldForcePersistOnAlarm(tx *gorm.DB, deviceID uint64, at time.Time, alarmEvents []AlarmEvent) bool {
+	if len(alarmEvents) > 0 {
+		for _, event := range alarmEvents {
+			if p.trackPersist.ForceOnFenceAlarm && event.Type == "out_of_fence" {
+				return true
+			}
+			if p.trackPersist.ForceOnSOSAlarm && event.Type == "sos" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func findOrCreateDevice(tx *gorm.DB, topic deviceTopic) (*model.Device, error) {

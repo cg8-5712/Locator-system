@@ -32,6 +32,10 @@ type Device struct {
 	ConfigPayload   datatypes.JSON `json:"config_payload" gorm:"column:config_payload"`
 	StatusUpdatedAt *time.Time     `json:"status_updated_at" gorm:"column:status_updated_at"`
 	ConfigUpdatedAt *time.Time     `json:"config_updated_at" gorm:"column:config_updated_at"`
+	LastLatitude    *float64       `json:"last_latitude" gorm:"column:last_latitude"`
+	LastLongitude   *float64       `json:"last_longitude" gorm:"column:last_longitude"`
+	LastLocationAt  *time.Time     `json:"last_location_at" gorm:"column:last_location_at"`
+	LastStillSeconds int           `json:"last_still_seconds" gorm:"column:last_still_seconds;not null;default:0"`
 	LastFixAt       *time.Time     `json:"last_fix_at" gorm:"column:last_fix_at"`
 	LastOnline      *time.Time     `json:"last_online" gorm:"column:last_online"`
 	CreatedAt       time.Time      `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`

@@ -484,16 +484,6 @@ func (s *ShareService) authorizePublicShare(ctx context.Context, shareCode strin
 }
 
 func (s *ShareService) loadPublicLocation(ctx context.Context, device model.Device) (*PublicLocationResult, error) {
-	var record model.GPSRecord
-	err := s.db.WithContext(ctx).
-		Where("device_id = ?", device.ID).
-		Order("gps_time DESC").
-		Order("id DESC").
-		Take(&record).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("load latest gps record for device %s: %w", device.DeviceSN, err)
-	}
-
 	statusPayload := decodeJSONMap(device.StatusPayload)
 
 	result := &PublicLocationResult{
@@ -511,15 +501,38 @@ func (s *ShareService) loadPublicLocation(ctx context.Context, device model.Devi
 		result.AccuracyMeters = &accuracy
 	}
 
-	if err == nil {
-		lat := record.Latitude
-		lng := record.Longitude
-		timeValue := record.GPSTime
+	if device.LastLatitude != nil && device.LastLongitude != nil && device.LastLocationAt != nil {
+		lat := *device.LastLatitude
+		lng := *device.LastLongitude
+		timeValue := *device.LastLocationAt
 		result.Latitude = &lat
 		result.Longitude = &lng
 		result.Time = &timeValue
-		result.StillSeconds = record.StillSeconds
+		result.StillSeconds = device.LastStillSeconds
+		return result, nil
 	}
+
+	var record model.GPSRecord
+	err := s.db.WithContext(ctx).
+		Where("device_id = ?", device.ID).
+		Order("gps_time DESC").
+		Order("id DESC").
+		Take(&record).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return result, nil
+		}
+
+		return nil, fmt.Errorf("load latest gps record for device %s: %w", device.DeviceSN, err)
+	}
+
+	lat := record.Latitude
+	lng := record.Longitude
+	timeValue := record.GPSTime
+	result.Latitude = &lat
+	result.Longitude = &lng
+	result.Time = &timeValue
+	result.StillSeconds = record.StillSeconds
 
 	return result, nil
 }

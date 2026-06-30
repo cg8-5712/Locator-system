@@ -78,6 +78,13 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	mqttProcessor := service.NewMQTTMessageProcessor(dbStore.DB(), appLogger)
 	mqttProcessor.SetRealtimePublisher(wsHub)
 	mqttProcessor.SetAlarmRuleService(alarmRules)
+	mqttProcessor.SetTrackPersistConfig(service.TrackPersistConfig{
+		MinDistanceMeters: cfg.Track.PersistMinDistanceMeters,
+		MinHeadingChange:  cfg.Track.PersistMinHeadingChange,
+		ForceInterval:     cfg.Track.PersistForceInterval,
+		ForceOnFenceAlarm: cfg.Track.PersistForceOnFenceAlarm,
+		ForceOnSOSAlarm:   cfg.Track.PersistForceOnSOSAlarm,
+	})
 	mqttSvc := mqttclient.New(cfg.MQTT, appLogger, mqttProcessor)
 	if err := mqttSvc.Start(rootCtx); err != nil {
 		return fmt.Errorf("start mqtt service: %w", err)

@@ -227,6 +227,10 @@ func TestMQTTMessageProcessorStoresCompactLocationAndStillKeepalive(t *testing.T
 		t.Fatalf("device.GPSState = %q, want located", device.GPSState)
 	}
 
+	if device.LastLatitude == nil || device.LastLongitude == nil || device.LastLocationAt == nil {
+		t.Fatal("device latest location cache is empty")
+	}
+
 	var record model.GPSRecord
 	if err := store.DB().Where("device_id = ?", device.ID).Take(&record).Error; err != nil {
 		t.Fatalf("load gps record error = %v", err)
@@ -234,6 +238,110 @@ func TestMQTTMessageProcessorStoresCompactLocationAndStillKeepalive(t *testing.T
 
 	if record.StillSeconds != 600 {
 		t.Fatalf("record.StillSeconds = %d, want 600", record.StillSeconds)
+	}
+
+	if device.LastStillSeconds != 600 {
+		t.Fatalf("device.LastStillSeconds = %d, want 600", device.LastStillSeconds)
+	}
+}
+
+func TestMQTTMessageProcessorSuppressesSmallMovementButKeepsLatestLocation(t *testing.T) {
+	store := openTestStore(t)
+	defer closeTestStore(t, store)
+
+	processor := NewMQTTMessageProcessor(store.DB(), logger.New("error"))
+	processor.SetTrackPersistConfig(TrackPersistConfig{
+		MinDistanceMeters: 40,
+		MinHeadingChange:  30,
+		ForceInterval:     3 * time.Minute,
+		ForceOnFenceAlarm: true,
+		ForceOnSOSAlarm:   true,
+	})
+
+	firstAt := time.Date(2026, 6, 22, 9, 3, 54, 0, time.UTC)
+	secondAt := firstAt.Add(30 * time.Second)
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("F:3956.20359N,11622.44467E,090353AA*4C"),
+		ReceivedAt: firstAt,
+	}); err != nil {
+		t.Fatalf("first compact location HandleMessage() error = %v", err)
+	}
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("F:3956.20370N,11622.44480E,090423AA*4C"),
+		ReceivedAt: secondAt,
+	}); err != nil {
+		t.Fatalf("second compact location HandleMessage() error = %v", err)
+	}
+
+	var device model.Device
+	if err := store.DB().Where("device_sn = ?", "locator-esp32s3-001").Take(&device).Error; err != nil {
+		t.Fatalf("load device error = %v", err)
+	}
+
+	var count int64
+	if err := store.DB().Model(&model.GPSRecord{}).Where("device_id = ?", device.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count gps records error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("gps record count = %d, want 1", count)
+	}
+
+	if device.LastLatitude == nil || device.LastLongitude == nil || device.LastLocationAt == nil {
+		t.Fatal("device latest location cache is empty")
+	}
+	expectedLocationAt := time.Date(2026, 6, 22, 9, 4, 23, 0, time.UTC)
+	if !device.LastLocationAt.Equal(expectedLocationAt) {
+		t.Fatalf("device.LastLocationAt = %v, want %v", device.LastLocationAt, expectedLocationAt)
+	}
+}
+
+func TestMQTTMessageProcessorPersistsByForceInterval(t *testing.T) {
+	store := openTestStore(t)
+	defer closeTestStore(t, store)
+
+	processor := NewMQTTMessageProcessor(store.DB(), logger.New("error"))
+	processor.SetTrackPersistConfig(TrackPersistConfig{
+		MinDistanceMeters: 40,
+		MinHeadingChange:  30,
+		ForceInterval:     3 * time.Minute,
+		ForceOnFenceAlarm: true,
+		ForceOnSOSAlarm:   true,
+	})
+
+	firstAt := time.Date(2026, 6, 22, 9, 3, 54, 0, time.UTC)
+	secondAt := firstAt.Add(4 * time.Minute)
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("F:3956.20359N,11622.44467E,090353AA*4C"),
+		ReceivedAt: firstAt,
+	}); err != nil {
+		t.Fatalf("first compact location HandleMessage() error = %v", err)
+	}
+
+	if err := processor.HandleMessage(context.Background(), mqtt.ReceivedMessage{
+		Topic:      "locator/locator-esp32s3-001/location",
+		Payload:    []byte("F:3956.20370N,11622.44480E,090753AA*4C"),
+		ReceivedAt: secondAt,
+	}); err != nil {
+		t.Fatalf("second compact location HandleMessage() error = %v", err)
+	}
+
+	var device model.Device
+	if err := store.DB().Where("device_sn = ?", "locator-esp32s3-001").Take(&device).Error; err != nil {
+		t.Fatalf("load device error = %v", err)
+	}
+
+	var count int64
+	if err := store.DB().Model(&model.GPSRecord{}).Where("device_id = ?", device.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count gps records error = %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("gps record count = %d, want 2", count)
 	}
 }
 

@@ -134,6 +134,24 @@ Locator/
 - 生产或联调环境可切换到 PostgreSQL，通过 `DB_DRIVER=postgres` 和 `DB_DSN=...` 配置
 - 服务启动时会使用 GORM 自动迁移基础表结构
 - 当前设备模型同时保存 `device_sn`、`imei`、`iccid`，其中 `device_sn` 用于 MQTT topic 路由，`imei` 用于设备唯一绑定
+- `locator/<device_id>/location` 的 `F:` 全量定位不会再默认“来一条存一条”，后端会始终更新设备当前点，并按距离 / 方向 / 时间阈值择优写入历史轨迹
+
+### 轨迹压缩默认值
+
+用于控制 `locator/<device_id>/location` 的 `F:` 历史落库频率：
+
+- `TRACK_PERSIST_MIN_DISTANCE_METERS=40`
+- `TRACK_PERSIST_MIN_HEADING_CHANGE_DEGREES=30`
+- `TRACK_PERSIST_FORCE_INTERVAL=3m`
+- `TRACK_PERSIST_FORCE_ON_FENCE_ALARM=true`
+- `TRACK_PERSIST_FORCE_ON_SOS_ALARM=true`
+
+当前行为：
+
+- 设备当前状态和当前位置每次上报都会更新到 `devices`
+- 历史 `gps_records` 仅在首点、位移超阈值、方向变化超阈值、超过强制重同步时间、或围栏告警触发时新增
+- `S:` 只更新最近轨迹点的 `still_seconds`，并同步更新设备当前静止时长
+- `Z:0` 不新增轨迹，只更新在线和 GPS 状态
 
 ### `users`
 

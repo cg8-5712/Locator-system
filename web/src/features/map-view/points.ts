@@ -33,8 +33,8 @@ export function deriveLivePoints(
       continue;
     }
 
-    const lat = toNumber(payload.lat ?? payload.latitude);
-    const lng = toNumber(payload.lng ?? payload.lon ?? payload.longitude);
+    const lat = toNumber(device.last_latitude ?? payload.lat ?? payload.latitude);
+    const lng = toNumber(device.last_longitude ?? payload.lng ?? payload.lon ?? payload.longitude);
     const point = {
       deviceSN: device.device_sn,
       name: device.name,
@@ -43,7 +43,7 @@ export function deriveLivePoints(
       battery: device.battery,
       status: device.status,
       gpsState: device.gps_state,
-      lastUpdate: device.last_online,
+      lastUpdate: device.last_location_at ?? device.last_online,
       accuracyMeters,
     };
 

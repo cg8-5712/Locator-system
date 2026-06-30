@@ -21,6 +21,10 @@ export interface DeviceSummary {
   config_payload?: Record<string, unknown>;
   status_updated_at?: string;
   config_updated_at?: string;
+  last_latitude?: number | null;
+  last_longitude?: number | null;
+  last_location_at?: string | null;
+  last_still_seconds: number;
   last_fix_at?: string;
   last_online?: string;
   created_at: string;

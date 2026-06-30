@@ -21,6 +21,7 @@ type Config struct {
 	Alarm           AlarmConfig
 	Offline         OfflineConfig
 	MQTT            MQTTConfig
+	Track           TrackConfig
 }
 
 type HTTPConfig struct {
@@ -47,6 +48,14 @@ type MQTTConfig struct {
 	QoS              byte
 	ConnectTimeout   time.Duration
 	OperationTimeout time.Duration
+}
+
+type TrackConfig struct {
+	PersistMinDistanceMeters float64
+	PersistMinHeadingChange  float64
+	PersistForceInterval     time.Duration
+	PersistForceOnFenceAlarm bool
+	PersistForceOnSOSAlarm   bool
 }
 
 type AuthConfig struct {
@@ -119,6 +128,13 @@ func Load() Config {
 			QoS:              getByteEnv("MQTT_QOS", 1),
 			ConnectTimeout:   getDurationEnv("MQTT_CONNECT_TIMEOUT", 10*time.Second),
 			OperationTimeout: getDurationEnv("MQTT_OPERATION_TIMEOUT", 5*time.Second),
+		},
+		Track: TrackConfig{
+			PersistMinDistanceMeters: getFloat64Env("TRACK_PERSIST_MIN_DISTANCE_METERS", 40),
+			PersistMinHeadingChange:  getFloat64Env("TRACK_PERSIST_MIN_HEADING_CHANGE_DEGREES", 30),
+			PersistForceInterval:     getDurationEnv("TRACK_PERSIST_FORCE_INTERVAL", 3*time.Minute),
+			PersistForceOnFenceAlarm: getBoolEnv("TRACK_PERSIST_FORCE_ON_FENCE_ALARM", true),
+			PersistForceOnSOSAlarm:   getBoolEnv("TRACK_PERSIST_FORCE_ON_SOS_ALARM", true),
 		},
 	}
 }
@@ -239,6 +255,20 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
+		return defaultValue
+	}
+
+	return parsed
+}
+
+func getFloat64Env(key string, defaultValue float64) float64 {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || parsed < 0 {
 		return defaultValue
 	}
 

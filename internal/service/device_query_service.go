@@ -89,6 +89,10 @@ type DeviceSummary struct {
 	ConfigPayload   datatypes.JSON `json:"config_payload,omitempty"`
 	StatusUpdatedAt *time.Time     `json:"status_updated_at"`
 	ConfigUpdatedAt *time.Time     `json:"config_updated_at"`
+	LastLatitude    *float64       `json:"last_latitude"`
+	LastLongitude   *float64       `json:"last_longitude"`
+	LastLocationAt  *time.Time     `json:"last_location_at"`
+	LastStillSeconds int           `json:"last_still_seconds"`
 	LastFixAt       *time.Time     `json:"last_fix_at"`
 	LastOnline      *time.Time     `json:"last_online"`
 	CreatedAt       time.Time      `json:"created_at"`
@@ -320,6 +324,10 @@ func mapDeviceSummary(device model.Device) DeviceSummary {
 		ConfigPayload:   copyJSON(device.ConfigPayload),
 		StatusUpdatedAt: device.StatusUpdatedAt,
 		ConfigUpdatedAt: device.ConfigUpdatedAt,
+		LastLatitude:    device.LastLatitude,
+		LastLongitude:   device.LastLongitude,
+		LastLocationAt:  device.LastLocationAt,
+		LastStillSeconds: device.LastStillSeconds,
 		LastFixAt:       device.LastFixAt,
 		LastOnline:      device.LastOnline,
 		CreatedAt:       device.CreatedAt,
