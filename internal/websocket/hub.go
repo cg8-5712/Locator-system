@@ -34,8 +34,9 @@ type Hub struct {
 }
 
 type client struct {
-	conn *gorillaws.Conn
-	send chan []byte
+	conn           *gorillaws.Conn
+	send           chan []byte
+	deviceSNFilter string
 }
 
 func NewHub(logger *slog.Logger) *Hub {
@@ -57,6 +58,14 @@ func NewHub(logger *slog.Logger) *Hub {
 }
 
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.serve(w, r, "")
+}
+
+func (h *Hub) ServeScopedHTTP(w http.ResponseWriter, r *http.Request, deviceSN string) {
+	h.serve(w, r, deviceSN)
+}
+
+func (h *Hub) serve(w http.ResponseWriter, r *http.Request, deviceSN string) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		h.logger.Warn("websocket upgrade failed", "error", err)
@@ -64,8 +73,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &client{
-		conn: conn,
-		send: make(chan []byte, 32),
+		conn:           conn,
+		send:           make(chan []byte, 32),
+		deviceSNFilter: deviceSN,
 	}
 
 	h.addClient(client)
@@ -92,18 +102,18 @@ func (h *Hub) Shutdown(_ context.Context) error {
 }
 
 func (h *Hub) PublishLocation(event service.LocationEvent) {
-	h.publish("location", event)
+	h.publish("location", event.DeviceSN, event)
 }
 
 func (h *Hub) PublishDeviceStatus(event service.DeviceStatusEvent) {
-	h.publish("device_status", event)
+	h.publish("device_status", event.DeviceSN, event)
 }
 
 func (h *Hub) PublishAlarm(event service.AlarmEvent) {
-	h.publish("alarm", event)
+	h.publish("alarm", event.DeviceSN, event)
 }
 
-func (h *Hub) publish(eventType string, data any) {
+func (h *Hub) publish(eventType string, deviceSN string, data any) {
 	body, err := json.Marshal(messageEnvelope{
 		Type: eventType,
 		Data: data,
@@ -121,6 +131,10 @@ func (h *Hub) publish(eventType string, data any) {
 	h.mu.RUnlock()
 
 	for _, client := range clients {
+		if client.deviceSNFilter != "" && client.deviceSNFilter != deviceSN {
+			continue
+		}
+
 		select {
 		case client.send <- body:
 		default:

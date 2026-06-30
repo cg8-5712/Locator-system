@@ -52,6 +52,9 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	fenceRepo := repository.NewFenceRepository(dbStore.DB())
 	fenceSvc := service.NewFenceService(deviceRepo, fenceRepo)
 	userRepo := repository.NewUserRepository(dbStore.DB())
+	userSvc := service.NewUserService(userRepo)
+	shareRepo := repository.NewShareRepository(dbStore.DB())
+	shareSvc := service.NewShareService(dbStore.DB(), deviceRepo, shareRepo)
 	authSvc := service.NewAuthService(userRepo, service.AuthConfig{
 		Enabled:                cfg.Auth.Enabled,
 		JWTSecret:              cfg.Auth.JWTSecret,
@@ -87,7 +90,7 @@ func run(rootCtx context.Context, cfg config.Config, appLogger *slog.Logger) err
 	})
 	offlineMonitor.Start(rootCtx)
 
-	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceSvc, alarmSvc, fenceSvc, authSvc, wsHub)
+	router := api.NewRouter(appLogger, mqttSvc, dbStore, deviceSvc, alarmSvc, fenceSvc, authSvc, wsHub, shareSvc, userSvc)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           router,

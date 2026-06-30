@@ -31,6 +31,7 @@ type databaseService interface {
 
 type websocketHandler interface {
 	ServeHTTP(http.ResponseWriter, *http.Request)
+	ServeScopedHTTP(http.ResponseWriter, *http.Request, string)
 }
 
 type deviceService interface {
@@ -44,6 +45,24 @@ type deviceService interface {
 
 type alarmService interface {
 	ListAlarms(ctx context.Context, query service.AlarmListQuery) (*service.AlarmListResult, error)
+}
+
+type shareService interface {
+	ListShares(ctx context.Context, query service.ShareListQuery) (*service.ShareListResult, error)
+	CreateShare(ctx context.Context, input service.ShareCreateInput) (*service.ShareCreateResult, error)
+	RevokeShare(ctx context.Context, shareID uint64) error
+	GetPublicShare(ctx context.Context, shareCode string) (*service.PublicShareSummary, error)
+	VerifyPublicShare(ctx context.Context, shareCode string, input service.ShareVerifyInput) (*service.ShareVerifyResult, error)
+	GetPublicLocation(ctx context.Context, shareCode string, accessToken string) (*service.PublicLocationResult, error)
+	GetPublicTrack(ctx context.Context, shareCode string, accessToken string) (*service.PublicTrackResult, error)
+	ValidatePublicWebsocket(ctx context.Context, shareCode string, accessToken string) (string, error)
+}
+
+type userService interface {
+	ListUsers(ctx context.Context, query service.UserListQuery) (*service.UserListResult, error)
+	CreateUser(ctx context.Context, input service.UserCreateInput) (*service.UserSummary, error)
+	UpdateUser(ctx context.Context, userID uint64, input service.UserUpdateInput) (*service.UserSummary, error)
+	DeleteUser(ctx context.Context, userID uint64) error
 }
 
 type fenceService interface {
@@ -84,7 +103,31 @@ type fenceUpsertRequest struct {
 	Polygon []service.FencePoint `json:"polygon" binding:"required"`
 }
 
-func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService, fenceSvc fenceService, authSvc authService, wsHandler websocketHandler) *gin.Engine {
+type shareCreateRequest struct {
+	ShareMode string  `json:"share_mode" binding:"required"`
+	Password  *string `json:"password"`
+	ExpiresAt string  `json:"expires_at" binding:"required"`
+	MaxVisits *int    `json:"max_visits"`
+	Note      string  `json:"note"`
+}
+
+type shareVerifyRequest struct {
+	ViewerID string `json:"viewer_id" binding:"required"`
+	Password string `json:"password"`
+}
+
+type userCreateRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Role     string `json:"role" binding:"required"`
+}
+
+type userUpdateRequest struct {
+	Password *string `json:"password"`
+	Role     *string `json:"role"`
+}
+
+func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseService, deviceSvc deviceService, alarmSvc alarmService, fenceSvc fenceService, authSvc authService, wsHandler websocketHandler, shareSvc shareService, userSvc userService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(appLogger))
@@ -155,6 +198,106 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			}
 
 			ok(c, result)
+		})
+
+		apiGroup.GET("/public/shares/:share_code", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			share, err := shareSvc.GetPublicShare(c.Request.Context(), c.Param("share_code"))
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, share)
+		})
+
+		apiGroup.POST("/public/shares/:share_code/verify", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			var req shareVerifyRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid share verify request: "+err.Error())
+				return
+			}
+
+			result, err := shareSvc.VerifyPublicShare(c.Request.Context(), c.Param("share_code"), service.ShareVerifyInput{
+				ViewerID: req.ViewerID,
+				Password: req.Password,
+			})
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, result)
+		})
+
+		apiGroup.GET("/public/shares/:share_code/location", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			location, err := shareSvc.GetPublicLocation(
+				c.Request.Context(),
+				c.Param("share_code"),
+				extractShareAccessToken(c),
+			)
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, location)
+		})
+
+		apiGroup.GET("/public/shares/:share_code/track", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			track, err := shareSvc.GetPublicTrack(
+				c.Request.Context(),
+				c.Param("share_code"),
+				extractShareAccessToken(c),
+			)
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, track)
+		})
+
+		apiGroup.GET("/public/shares/:share_code/ws", func(c *gin.Context) {
+			if wsHandler == nil {
+				fail(c, http.StatusServiceUnavailable, "websocket is unavailable")
+				return
+			}
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			deviceSN, err := shareSvc.ValidatePublicWebsocket(
+				c.Request.Context(),
+				c.Param("share_code"),
+				extractShareAccessToken(c),
+			)
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			wsHandler.ServeScopedHTTP(c.Writer, c.Request, deviceSN)
 		})
 	}
 
@@ -323,6 +466,44 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 				"messages": mqttSvc.RecentMessages(limit),
 			})
 		})
+
+		protectedGroup.GET("/shares", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			result, err := shareSvc.ListShares(c.Request.Context(), service.ShareListQuery{
+				DeviceSN: c.Query("device_sn"),
+				Page:     parsePositiveInt(c.Query("page"), 1, 100000),
+				PageSize: parsePositiveInt(c.Query("page_size"), 50, 200),
+			})
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, result)
+		})
+
+		protectedGroup.GET("/devices/:device_sn/shares", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			result, err := shareSvc.ListShares(c.Request.Context(), service.ShareListQuery{
+				DeviceSN: c.Param("device_sn"),
+				Page:     parsePositiveInt(c.Query("page"), 1, 100000),
+				PageSize: parsePositiveInt(c.Query("page_size"), 50, 200),
+			})
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, result)
+		})
 	}
 
 	adminGroup := protectedGroup.Group("")
@@ -386,6 +567,49 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, device)
 		})
 
+		adminGroup.POST("/devices/:device_sn/shares", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			var req shareCreateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid create share request: "+err.Error())
+				return
+			}
+
+			expiresAt, err := parseRequiredTime(req.ExpiresAt)
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid expires_at: "+err.Error())
+				return
+			}
+
+			var createdByUserID *uint64
+			if user, ok := currentUser(c); ok {
+				createdByUserID = &user.UserID
+			}
+
+			result, err := shareSvc.CreateShare(c.Request.Context(), service.ShareCreateInput{
+				DeviceSN:        c.Param("device_sn"),
+				ShareMode:       req.ShareMode,
+				Password:        req.Password,
+				ExpiresAt:       expiresAt,
+				MaxVisits:       req.MaxVisits,
+				Note:            req.Note,
+				CreatedByUserID: createdByUserID,
+			})
+			if err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			c.JSON(http.StatusCreated, gin.H{
+				"success": true,
+				"data":    result,
+			})
+		})
+
 		adminGroup.DELETE("/devices/:device_sn", func(c *gin.Context) {
 			if deviceSvc == nil {
 				fail(c, http.StatusServiceUnavailable, "device service is unavailable")
@@ -401,6 +625,29 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 			ok(c, gin.H{
 				"deleted":   true,
 				"device_sn": deviceSN,
+			})
+		})
+
+		adminGroup.DELETE("/shares/:share_id", func(c *gin.Context) {
+			if shareSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "share service is unavailable")
+				return
+			}
+
+			shareID, err := parseUint64Param(c.Param("share_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid share_id: "+err.Error())
+				return
+			}
+
+			if err := shareSvc.RevokeShare(c.Request.Context(), shareID); err != nil {
+				handleShareServiceError(c, err)
+				return
+			}
+
+			ok(c, gin.H{
+				"deleted":  true,
+				"share_id": shareID,
 			})
 		})
 
@@ -559,6 +806,105 @@ func NewRouter(appLogger *slog.Logger, mqttSvc mqttService, dbSvc databaseServic
 				"published": true,
 			})
 		})
+
+		adminGroup.GET("/users", func(c *gin.Context) {
+			if userSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "user service is unavailable")
+				return
+			}
+
+			result, err := userSvc.ListUsers(c.Request.Context(), service.UserListQuery{
+				Page:     parsePositiveInt(c.Query("page"), 1, 100000),
+				PageSize: parsePositiveInt(c.Query("page_size"), 50, 200),
+			})
+			if err != nil {
+				handleUserServiceError(c, err)
+				return
+			}
+
+			ok(c, result)
+		})
+
+		adminGroup.POST("/users", func(c *gin.Context) {
+			if userSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "user service is unavailable")
+				return
+			}
+
+			var req userCreateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid create user request: "+err.Error())
+				return
+			}
+
+			user, err := userSvc.CreateUser(c.Request.Context(), service.UserCreateInput{
+				Username: req.Username,
+				Password: req.Password,
+				Role:     req.Role,
+			})
+			if err != nil {
+				handleUserServiceError(c, err)
+				return
+			}
+
+			c.JSON(http.StatusCreated, gin.H{
+				"success": true,
+				"data":    user,
+			})
+		})
+
+		adminGroup.PUT("/users/:user_id", func(c *gin.Context) {
+			if userSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "user service is unavailable")
+				return
+			}
+
+			userID, err := parseUint64Param(c.Param("user_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid user_id: "+err.Error())
+				return
+			}
+
+			var req userUpdateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, "invalid update user request: "+err.Error())
+				return
+			}
+
+			user, err := userSvc.UpdateUser(c.Request.Context(), userID, service.UserUpdateInput{
+				Password: req.Password,
+				Role:     req.Role,
+			})
+			if err != nil {
+				handleUserServiceError(c, err)
+				return
+			}
+
+			ok(c, user)
+		})
+
+		adminGroup.DELETE("/users/:user_id", func(c *gin.Context) {
+			if userSvc == nil {
+				fail(c, http.StatusServiceUnavailable, "user service is unavailable")
+				return
+			}
+
+			userID, err := parseUint64Param(c.Param("user_id"))
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid user_id: "+err.Error())
+				return
+			}
+
+			if err := userSvc.DeleteUser(c.Request.Context(), userID); err != nil {
+				handleUserServiceError(c, err)
+				return
+			}
+
+			ok(c, gin.H{
+				"deleted": true,
+				"user_id": userID,
+			})
+		})
 	}
 
 	return router
@@ -625,6 +971,35 @@ func handleFenceServiceError(c *gin.Context, err error) {
 	}
 }
 
+func handleShareServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrShareNotFound):
+		fail(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrShareExpired),
+		errors.Is(err, service.ErrShareRevoked),
+		errors.Is(err, service.ErrShareVisitLimit),
+		errors.Is(err, service.ErrShareTrackNotAllowed):
+		fail(c, http.StatusForbidden, err.Error())
+	case errors.Is(err, service.ErrSharePasswordRequired),
+		errors.Is(err, service.ErrShareInvalidPassword),
+		errors.Is(err, service.ErrShareAccessDenied):
+		fail(c, http.StatusUnauthorized, err.Error())
+	default:
+		fail(c, http.StatusBadRequest, err.Error())
+	}
+}
+
+func handleUserServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrUserNotFound):
+		fail(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrUsernameConflict):
+		fail(c, http.StatusConflict, err.Error())
+	default:
+		fail(c, http.StatusBadRequest, err.Error())
+	}
+}
+
 func parsePositiveInt(raw string, defaultValue int, maxValue int) int {
 	if raw == "" {
 		return defaultValue
@@ -678,4 +1053,24 @@ func parseUint64Param(raw string) (uint64, error) {
 	}
 
 	return value, nil
+}
+
+func parseRequiredTime(raw string) (time.Time, error) {
+	parsed, err := parseOptionalTime(raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if parsed == nil {
+		return time.Time{}, errors.New("time is required")
+	}
+
+	return parsed.UTC(), nil
+}
+
+func extractShareAccessToken(c *gin.Context) string {
+	if token := strings.TrimSpace(c.Query("access_token")); token != "" {
+		return token
+	}
+
+	return extractBearerToken(c.GetHeader("Authorization"))
 }

@@ -81,6 +81,41 @@ func (Alarm) TableName() string {
 	return "alarms"
 }
 
+type LocationShare struct {
+	ID              uint64     `json:"id" gorm:"primaryKey"`
+	DeviceID        uint64     `json:"device_id" gorm:"column:device_id;not null;index"`
+	CreatedByUserID *uint64    `json:"created_by_user_id" gorm:"column:created_by_user_id;index"`
+	ShareCode       string     `json:"share_code" gorm:"column:share_code;size:32;uniqueIndex;not null"`
+	ShareMode       string     `json:"share_mode" gorm:"column:share_mode;size:32;not null"`
+	PasswordHash    *string    `json:"password_hash" gorm:"column:password_hash;type:text"`
+	Note            string     `json:"note" gorm:"column:note;type:text"`
+	ExpiresAt       time.Time  `json:"expires_at" gorm:"column:expires_at;not null;index"`
+	MaxVisits       *int       `json:"max_visits" gorm:"column:max_visits"`
+	VisitCount      int        `json:"visit_count" gorm:"column:visit_count;not null;default:0"`
+	LastAccessAt    *time.Time `json:"last_access_at" gorm:"column:last_access_at"`
+	RevokedAt       *time.Time `json:"revoked_at" gorm:"column:revoked_at;index"`
+	CreatedAt       time.Time  `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
+}
+
+func (LocationShare) TableName() string {
+	return "location_shares"
+}
+
+type LocationShareSession struct {
+	ID          uint64     `json:"id" gorm:"primaryKey"`
+	ShareID      uint64     `json:"share_id" gorm:"column:share_id;not null;index"`
+	ViewerID     string     `json:"viewer_id" gorm:"column:viewer_id;size:128;not null;index"`
+	AccessToken  string     `json:"access_token" gorm:"column:access_token;size:128;uniqueIndex;not null"`
+	ExpiresAt    time.Time  `json:"expires_at" gorm:"column:expires_at;not null;index"`
+	LastSeenAt   *time.Time `json:"last_seen_at" gorm:"column:last_seen_at"`
+	LastAccessAt *time.Time `json:"last_access_at" gorm:"column:last_access_at"`
+	CreatedAt    time.Time  `json:"created_at" gorm:"column:created_at;not null;autoCreateTime"`
+}
+
+func (LocationShareSession) TableName() string {
+	return "location_share_sessions"
+}
+
 func AutoMigrateModels() []any {
 	return []any{
 		&User{},
@@ -88,5 +123,7 @@ func AutoMigrateModels() []any {
 		&GPSRecord{},
 		&Fence{},
 		&Alarm{},
+		&LocationShare{},
+		&LocationShareSession{},
 	}
 }
