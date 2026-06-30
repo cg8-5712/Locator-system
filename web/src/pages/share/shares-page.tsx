@@ -1,148 +1,74 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AppHeader } from "../../components/shell/app-header";
 import { useMapDataSource } from "../../features/map-view/map-data-context";
 import { buildModePath } from "../../features/map-view/mode";
+import { useShares } from "../../hooks/use-shares";
 import { formatDateTime, formatRelativeTime } from "../../lib/time";
-import type { DeviceSummary } from "../../types/device";
+import { revokeShare } from "../../services/http/shares";
+import type { ShareSummary } from "../../types/share";
+import { mockDevices } from "../../features/map-view/mock-devices";
 
-type ShareStatus = "active" | "expiring" | "expired" | "quota_used";
-type ShareMode = "live_only" | "today_track";
-
-interface ShareRecord {
-  id: string;
-  deviceSN: string;
-  deviceName: string;
-  mode: ShareMode;
-  status: ShareStatus;
-  passwordEnabled: boolean;
-  password: string | null;
-  maxVisits: number | null;
-  usedVisits: number;
-  expiresAt: string;
-  createdAt: string;
-  lastAccessAt: string | null;
-  url: string;
-  note: string;
-}
-
-const text = {
-  title: "分享管理",
-  desc: "统一查看位置分享链接、有效期、访问次数和预览入口。当前 live 模式先展示前端数据结构，待分享接口落地后可直接替换。",
-  active: "生效中",
-  expiring: "即将过期",
-  expired: "已过期",
-  usedUp: "额度用尽",
-  createHint: "新建分享",
-  backMap: "返回地图",
-  empty: "当前没有可展示的分享记录。",
-  previewMode: "前端预览",
-  liveMode: "待接后端",
-  copyLink: "复制链接",
-  openPreview: "打开预览",
-  visits: "访问额度",
-  expiresAt: "过期时间",
-  lastAccess: "最近访问",
-  createdAt: "创建时间",
-  policy: "访问策略",
-  target: "分享对象",
-  type: "分享内容",
-  password: "访问密码",
-  note: "备注",
-  unlimited: "不限次数",
-  noPassword: "未启用",
-};
-
-function createShareRecords(mode: "demo" | "live", devices: DeviceSummary[]): ShareRecord[] {
+function createDemoShares(): ShareSummary[] {
   const now = Date.now();
+  const deviceBySN = new Map(
+    mockDevices.map((device) => [device.device_sn, device.name || device.device_sn] as const)
+  );
 
-  function getName(deviceSN: string) {
-    const device = devices.find((item) => item.device_sn === deviceSN);
-    return device?.name || deviceSN;
-  }
-
-  function buildPreviewUrl(deviceSN: string, shareCode: string) {
-    return `${window.location.origin}/demo/share/${deviceSN}?code=${shareCode}`;
-  }
-
-  const records: ShareRecord[] = [
+  return [
     {
-      id: "share-001",
-      deviceSN: "locator-esp32s3-001",
-      deviceName: getName("locator-esp32s3-001"),
-      mode: "live_only",
+      id: 1,
+      device_sn: "locator-esp32s3-001",
+      device_name: deviceBySN.get("locator-esp32s3-001") ?? "locator-esp32s3-001",
+      share_code: "demoa7f9",
+      share_mode: "live_only",
+      requires_password: true,
+      note: "demo 分享：仅实时位置。",
+      expires_at: new Date(now + 55 * 60 * 1000).toISOString(),
+      max_visits: 5,
+      visit_count: 1,
+      remaining_visits: 4,
+      last_access_at: new Date(now - 2 * 60 * 1000).toISOString(),
+      created_at: new Date(now - 5 * 60 * 1000).toISOString(),
       status: "active",
-      passwordEnabled: true,
-      password: "888999",
-      maxVisits: 5,
-      usedVisits: 1,
-      expiresAt: new Date(now + 55 * 60 * 1000).toISOString(),
-      createdAt: new Date(now - 5 * 60 * 1000).toISOString(),
-      lastAccessAt: new Date(now - 2 * 60 * 1000).toISOString(),
-      url: buildPreviewUrl("locator-esp32s3-001", "a7f9g2e"),
-      note: "适合临时外部访客查看实时位置。",
     },
     {
-      id: "share-002",
-      deviceSN: "locator-esp32s3-002",
-      deviceName: getName("locator-esp32s3-002"),
-      mode: "today_track",
+      id: 2,
+      device_sn: "locator-esp32s3-002",
+      device_name: deviceBySN.get("locator-esp32s3-002") ?? "locator-esp32s3-002",
+      share_code: "demok2m4",
+      share_mode: "today_track",
+      requires_password: false,
+      note: "demo 分享：允许查看今日轨迹。",
+      expires_at: new Date(now + 18 * 60 * 1000).toISOString(),
+      max_visits: 20,
+      visit_count: 12,
+      remaining_visits: 8,
+      last_access_at: new Date(now - 6 * 60 * 1000).toISOString(),
+      created_at: new Date(now - 42 * 60 * 1000).toISOString(),
       status: "expiring",
-      passwordEnabled: false,
-      password: null,
-      maxVisits: 20,
-      usedVisits: 12,
-      expiresAt: new Date(now + 18 * 60 * 1000).toISOString(),
-      createdAt: new Date(now - 42 * 60 * 1000).toISOString(),
-      lastAccessAt: new Date(now - 6 * 60 * 1000).toISOString(),
-      url: buildPreviewUrl("locator-esp32s3-002", "k2m4v1q"),
-      note: "开放今日轨迹，适合班组长回看巡检路线。",
     },
     {
-      id: "share-003",
-      deviceSN: "locator-esp32s3-003",
-      deviceName: getName("locator-esp32s3-003"),
-      mode: "live_only",
+      id: 3,
+      device_sn: "locator-esp32s3-003",
+      device_name: deviceBySN.get("locator-esp32s3-003") ?? "locator-esp32s3-003",
+      share_code: "demom8t2",
+      share_mode: "live_only",
+      requires_password: true,
+      note: "demo 分享：额度已耗尽。",
+      expires_at: new Date(now + 3 * 60 * 60 * 1000).toISOString(),
+      max_visits: 3,
+      visit_count: 3,
+      remaining_visits: 0,
+      last_access_at: new Date(now - 11 * 60 * 1000).toISOString(),
+      created_at: new Date(now - 88 * 60 * 1000).toISOString(),
       status: "quota_used",
-      passwordEnabled: true,
-      password: "512314",
-      maxVisits: 3,
-      usedVisits: 3,
-      expiresAt: new Date(now + 3 * 60 * 60 * 1000).toISOString(),
-      createdAt: new Date(now - 88 * 60 * 1000).toISOString(),
-      lastAccessAt: new Date(now - 11 * 60 * 1000).toISOString(),
-      url: buildPreviewUrl("locator-esp32s3-003", "m8t2u6w"),
-      note: "额度已耗尽，常见于链接被二次转发。",
-    },
-    {
-      id: "share-004",
-      deviceSN: "locator-esp32s3-001",
-      deviceName: getName("locator-esp32s3-001"),
-      mode: "today_track",
-      status: "expired",
-      passwordEnabled: true,
-      password: "673821",
-      maxVisits: null,
-      usedVisits: 2,
-      expiresAt: new Date(now - 90 * 60 * 1000).toISOString(),
-      createdAt: new Date(now - 5 * 60 * 60 * 1000).toISOString(),
-      lastAccessAt: new Date(now - 95 * 60 * 1000).toISOString(),
-      url: buildPreviewUrl("locator-esp32s3-001", "q1x7d8n"),
-      note: "已过期记录可用于审计和复盘。",
     },
   ];
-
-  if (mode === "demo") {
-    return records;
-  }
-
-  return records.map((record) => ({
-    ...record,
-    note: `${record.note} 当前为 live 前端占位数据，等待分享 API 接入。`,
-  }));
 }
 
-function getStatusView(status: ShareStatus) {
+function getStatusView(status: ShareSummary["status"]) {
   switch (status) {
     case "active":
       return { label: "生效中", className: "bg-[#2f9e68]/12 text-[#20724c]" };
@@ -150,63 +76,74 @@ function getStatusView(status: ShareStatus) {
       return { label: "即将过期", className: "bg-[#d48a1f]/12 text-[#9d6412]" };
     case "quota_used":
       return { label: "额度用尽", className: "bg-[#d94747]/12 text-[#9d2323]" };
+    case "revoked":
+      return { label: "已撤销", className: "bg-[#7c8b94]/12 text-[#51616a]" };
     default:
       return { label: "已过期", className: "bg-[#7c8b94]/12 text-[#51616a]" };
   }
 }
 
-function getModeLabel(mode: ShareMode) {
+function getModeLabel(mode: ShareSummary["share_mode"]) {
   return mode === "today_track" ? "实时位置 + 今日轨迹" : "仅实时位置";
+}
+
+function buildPreviewUrl(mode: "demo" | "live", share: ShareSummary) {
+  return mode === "demo"
+    ? `${window.location.origin}/demo/share/${share.device_sn}?code=${share.share_code}`
+    : `${window.location.origin}/share/${share.share_code}`;
 }
 
 export function SharesPage() {
   const dataSource = useMapDataSource();
-  const devicesResult = dataSource.useDevices();
-  const records = useMemo(
-    () => createShareRecords(dataSource.mode, devicesResult.devices),
-    [dataSource.mode, devicesResult.devices]
+  const sharesQuery = useShares(dataSource.mode === "live" ? undefined : null);
+  const queryClient = useQueryClient();
+  const [selectedShareId, setSelectedShareId] = useState<number | null>(null);
+
+  const revokeMutation = useMutation({
+    mutationFn: revokeShare,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["shares"] });
+    },
+  });
+
+  const shares = useMemo(
+    () => (dataSource.mode === "demo" ? createDemoShares() : sharesQuery.data?.shares ?? []),
+    [dataSource.mode, sharesQuery.data?.shares]
   );
-  const [selectedShareId, setSelectedShareId] = useState<string | null>(records[0]?.id ?? null);
 
-  useEffect(() => {
-    if (!records.some((record) => record.id === selectedShareId)) {
-      setSelectedShareId(records[0]?.id ?? null);
-    }
-  }, [records, selectedShareId]);
-
-  const selectedRecord =
-    records.find((record) => record.id === selectedShareId) ?? records[0] ?? null;
+  const selectedShare =
+    shares.find((share) => share.id === selectedShareId) ?? shares[0] ?? null;
 
   const headerMetrics = [
     {
-      label: text.active,
-      value: `${records.filter((record) => record.status === "active").length}`,
-      tone: records.some((record) => record.status === "active")
+      label: "生效中",
+      value: `${shares.filter((share) => share.status === "active").length}`,
+      tone: shares.some((share) => share.status === "active")
         ? ("brand" as const)
         : ("default" as const),
     },
     {
-      label: text.expiring,
-      value: `${records.filter((record) => record.status === "expiring").length}`,
-      tone: records.some((record) => record.status === "expiring")
+      label: "即将过期",
+      value: `${shares.filter((share) => share.status === "expiring").length}`,
+      tone: shares.some((share) => share.status === "expiring")
         ? ("warn" as const)
         : ("default" as const),
     },
     {
-      label: text.usedUp,
-      value: `${records.filter((record) => record.status === "quota_used").length}`,
-      tone: records.some((record) => record.status === "quota_used")
+      label: "异常/停用",
+      value: `${shares.filter((share) => ["quota_used", "expired", "revoked"].includes(share.status)).length}`,
+      tone: shares.some((share) => ["quota_used", "expired", "revoked"].includes(share.status))
         ? ("danger" as const)
         : ("default" as const),
     },
   ];
 
   async function handleCopyLink() {
-    if (!selectedRecord || !navigator.clipboard?.writeText) {
+    if (!selectedShare || !navigator.clipboard?.writeText) {
       return;
     }
 
-    await navigator.clipboard.writeText(selectedRecord.url);
+    await navigator.clipboard.writeText(buildPreviewUrl(dataSource.mode, selectedShare));
   }
 
   return (
@@ -214,8 +151,8 @@ export function SharesPage() {
       <div className="grid min-h-[calc(100vh-2rem)] grid-rows-[auto_1fr] gap-4">
         <AppHeader
           mode={dataSource.mode}
-          title={text.title}
-          description={text.desc}
+          title="分享管理"
+          description="查看真实分享记录、有效期、访问额度和公开入口。地图页里的“分享实时位置”会直接写入这里。"
           metrics={headerMetrics}
           active="shares"
         >
@@ -223,17 +160,19 @@ export function SharesPage() {
             to={buildModePath(dataSource.mode, "/map")}
             className="rounded-full border border-black/8 bg-white/72 px-4 py-2 text-sm font-semibold text-[#10212b] transition hover:bg-white"
           >
-            {text.backMap}
+            返回地图
           </Link>
         </AppHeader>
 
-        <section className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
           <aside className="glass-panel flex min-h-0 flex-col rounded-[28px] p-4">
             <div className="flex items-center justify-between gap-3 px-1">
               <div>
-                <div className="text-sm font-semibold text-[#10212b]">{text.createHint}</div>
+                <div className="text-sm font-semibold text-[#10212b]">分享记录</div>
                 <div className="mt-1 text-xs leading-5 text-[#546570]">
-                  {dataSource.mode === "demo" ? text.previewMode : text.liveMode}
+                  {dataSource.mode === "demo"
+                    ? "demo 模式仍保留假数据流程验证。"
+                    : "live 模式已接入真实后端分享记录。"}
                 </div>
               </div>
               <Link
@@ -245,21 +184,37 @@ export function SharesPage() {
             </div>
 
             <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-              {records.length === 0 ? (
+              {dataSource.mode === "live" && sharesQuery.isLoading ? (
                 <div className="rounded-[24px] border border-dashed border-black/10 bg-white/56 px-4 py-6 text-sm leading-7 text-[#546570]">
-                  {text.empty}
+                  正在加载分享记录...
                 </div>
               ) : null}
 
-              {records.map((record) => {
-                const active = record.id === selectedRecord?.id;
-                const statusView = getStatusView(record.status);
+              {dataSource.mode === "live" && sharesQuery.isError ? (
+                <div className="rounded-[24px] border border-[#d94747]/20 bg-[#d94747]/8 px-4 py-6 text-sm leading-7 text-[#9d2323]">
+                  {sharesQuery.error instanceof Error
+                    ? sharesQuery.error.message
+                    : "加载分享记录失败"}
+                </div>
+              ) : null}
+
+              {!(dataSource.mode === "live" && sharesQuery.isLoading) &&
+              !(dataSource.mode === "live" && sharesQuery.isError) &&
+              shares.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-black/10 bg-white/56 px-4 py-6 text-sm leading-7 text-[#546570]">
+                  当前没有分享记录。
+                </div>
+              ) : null}
+
+              {shares.map((share) => {
+                const active = share.id === selectedShare?.id;
+                const statusView = getStatusView(share.status);
 
                 return (
                   <button
-                    key={record.id}
+                    key={share.id}
                     type="button"
-                    onClick={() => setSelectedShareId(record.id)}
+                    onClick={() => setSelectedShareId(share.id)}
                     className={`w-full rounded-[24px] border px-4 py-4 text-left transition ${
                       active
                         ? "border-[#1f88c9]/30 bg-[#1f88c9]/8 shadow-[0_12px_24px_rgba(31,136,201,0.12)]"
@@ -269,9 +224,9 @@ export function SharesPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-sm font-semibold text-[#10212b]">
-                          {record.deviceName}
+                          {share.device_name || share.device_sn}
                         </div>
-                        <div className="mt-1 text-xs text-[#546570]">{record.deviceSN}</div>
+                        <div className="mt-1 text-xs text-[#546570]">{share.device_sn}</div>
                       </div>
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusView.className}`}
@@ -280,9 +235,11 @@ export function SharesPage() {
                       </span>
                     </div>
 
-                    <div className="mt-3 text-sm text-[#10212b]">{getModeLabel(record.mode)}</div>
+                    <div className="mt-3 text-sm text-[#10212b]">
+                      {getModeLabel(share.share_mode)}
+                    </div>
                     <div className="mt-2 text-xs text-[#6a7a84]">
-                      过期于 {formatDateTime(record.expiresAt)}
+                      过期于 {formatDateTime(share.expires_at)}
                     </div>
                   </button>
                 );
@@ -291,7 +248,7 @@ export function SharesPage() {
           </aside>
 
           <section className="glass-panel flex min-h-0 flex-col rounded-[28px] p-5">
-            {selectedRecord ? (
+            {selectedShare ? (
               <>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -299,54 +256,51 @@ export function SharesPage() {
                       Share Detail
                     </p>
                     <h2 className="mt-2 text-2xl font-semibold text-[#10212b]">
-                      {selectedRecord.deviceName}
+                      {selectedShare.device_name || selectedShare.device_sn}
                     </h2>
-                    <p className="mt-1 text-sm text-[#546570]">{selectedRecord.deviceSN}</p>
+                    <p className="mt-1 text-sm text-[#546570]">{selectedShare.device_sn}</p>
                   </div>
                   <span
                     className={`inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${
-                      getStatusView(selectedRecord.status).className
+                      getStatusView(selectedShare.status).className
                     }`}
                   >
-                    {getStatusView(selectedRecord.status).label}
+                    {getStatusView(selectedShare.status).label}
                   </span>
                 </div>
 
                 <div className="mt-5 space-y-3">
-                  <InfoCard label={text.target} value={selectedRecord.deviceName} />
-                  <InfoCard label={text.type} value={getModeLabel(selectedRecord.mode)} />
+                  <InfoCard label="分享对象" value={selectedShare.device_name || selectedShare.device_sn} />
+                  <InfoCard label="分享内容" value={getModeLabel(selectedShare.share_mode)} />
+                  <InfoCard label="分享码" value={selectedShare.share_code} />
                   <InfoCard
-                    label={text.policy}
+                    label="访问策略"
                     value={
-                      selectedRecord.maxVisits === null
+                      selectedShare.max_visits == null
                         ? "密码可选，不限访问次数"
-                        : `最多 ${selectedRecord.maxVisits} 次访问`
+                        : `最多 ${selectedShare.max_visits} 次访问`
                     }
                   />
                   <InfoCard
-                    label={text.password}
+                    label="访问密码"
+                    value={selectedShare.requires_password ? "已启用" : "未启用"}
+                  />
+                  <InfoCard label="过期时间" value={formatDateTime(selectedShare.expires_at)} />
+                  <InfoCard
+                    label="访问额度"
                     value={
-                      selectedRecord.passwordEnabled
-                        ? selectedRecord.password || "--"
-                        : text.noPassword
-                    }
-                  />
-                  <InfoCard label={text.expiresAt} value={formatDateTime(selectedRecord.expiresAt)} />
-                  <InfoCard
-                    label={text.visits}
-                    value={
-                      selectedRecord.maxVisits === null
-                        ? text.unlimited
-                        : `${selectedRecord.usedVisits}/${selectedRecord.maxVisits}`
+                      selectedShare.max_visits == null
+                        ? "不限次数"
+                        : `${selectedShare.visit_count}/${selectedShare.max_visits}`
                     }
                   />
                   <InfoCard
-                    label={text.lastAccess}
-                    value={formatRelativeTime(selectedRecord.lastAccessAt ?? undefined)}
+                    label="最近访问"
+                    value={formatRelativeTime(selectedShare.last_access_at ?? undefined)}
                   />
-                  <InfoCard label={text.createdAt} value={formatDateTime(selectedRecord.createdAt)} />
-                  <InfoCard label="URL" value={selectedRecord.url} />
-                  <InfoCard label={text.note} value={selectedRecord.note} />
+                  <InfoCard label="创建时间" value={formatDateTime(selectedShare.created_at)} />
+                  <InfoCard label="URL" value={buildPreviewUrl(dataSource.mode, selectedShare)} />
+                  <InfoCard label="备注" value={selectedShare.note || "--"} />
                 </div>
 
                 <div className="mt-6 flex flex-wrap gap-3">
@@ -355,21 +309,31 @@ export function SharesPage() {
                     onClick={() => void handleCopyLink()}
                     className="rounded-2xl bg-[#10212b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#163445]"
                   >
-                    {text.copyLink}
+                    复制链接
                   </button>
                   <a
-                    href={selectedRecord.url}
+                    href={buildPreviewUrl(dataSource.mode, selectedShare)}
                     target="_blank"
                     rel="noreferrer"
                     className="rounded-2xl border border-black/8 bg-white/72 px-4 py-2.5 text-sm font-semibold text-[#10212b] transition hover:bg-white"
                   >
-                    {text.openPreview}
+                    打开预览
                   </a>
+                  {dataSource.mode === "live" ? (
+                    <button
+                      type="button"
+                      onClick={() => revokeMutation.mutate(selectedShare.id)}
+                      disabled={revokeMutation.isPending || selectedShare.status === "revoked"}
+                      className="rounded-2xl border border-[#d94747]/20 bg-[#d94747]/8 px-4 py-2.5 text-sm font-semibold text-[#9d2323] transition hover:bg-[#d94747]/12 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      撤销分享
+                    </button>
+                  ) : null}
                 </div>
               </>
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-[#546570]">
-                {text.empty}
+                当前没有分享记录。
               </div>
             )}
           </section>

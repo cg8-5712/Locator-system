@@ -15,6 +15,10 @@ function resolveWebSocketUrl(token: string): string {
   return url.toString();
 }
 
+function createSocket(url: string) {
+  return new WebSocket(url);
+}
+
 export function connectRealtime(
   token: string,
   handlers: {
@@ -24,7 +28,42 @@ export function connectRealtime(
     onError?: () => void;
   }
 ) {
-  const socket = new WebSocket(resolveWebSocketUrl(token));
+  const socket = createSocket(resolveWebSocketUrl(token));
+
+  socket.addEventListener("open", () => {
+    handlers.onOpen?.();
+  });
+
+  socket.addEventListener("message", (event) => {
+    try {
+      const parsed = JSON.parse(String(event.data)) as RealtimeEnvelope;
+      handlers.onMessage(parsed);
+    } catch {
+      // Ignore malformed transient messages from the broker or reverse proxy.
+    }
+  });
+
+  socket.addEventListener("close", () => {
+    handlers.onClose?.();
+  });
+
+  socket.addEventListener("error", () => {
+    handlers.onError?.();
+  });
+
+  return socket;
+}
+
+export function connectRealtimeByUrl(
+  url: string,
+  handlers: {
+    onMessage: (message: RealtimeEnvelope) => void;
+    onOpen?: () => void;
+    onClose?: () => void;
+    onError?: () => void;
+  }
+) {
+  const socket = createSocket(url);
 
   socket.addEventListener("open", () => {
     handlers.onOpen?.();

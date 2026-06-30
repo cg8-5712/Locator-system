@@ -11,7 +11,9 @@ import { MapPage } from "../pages/map/map-page";
 import { AlarmsPage } from "../pages/alarms/alarms-page";
 import { HistoryPage } from "../pages/history/history-page";
 import { DemoSharePage } from "../pages/share/demo-share-page";
+import { PublicSharePage } from "../pages/share/public-share-page";
 import { SharesPage } from "../pages/share/shares-page";
+import { AdminPage } from "../pages/admin/admin-page";
 
 function withDataSource(dataSource: MapDataSource, element: ReactNode) {
   return <MapDataProvider value={dataSource}>{element}</MapDataProvider>;
@@ -46,6 +48,10 @@ export const appRouter = createBrowserRouter([
         element: <DemoSharePage />,
       },
       {
+        path: "share/:shareCode",
+        element: <PublicSharePage />,
+      },
+      {
         path: "app",
         element: <ProtectedLayout />,
         children: [
@@ -61,6 +67,10 @@ export const appRouter = createBrowserRouter([
           {
             path: "shares",
             element: withDataSource(liveDataSource, <SharesPage />),
+          },
+          {
+            path: "admin",
+            element: <AdminPage />,
           },
           {
             path: "devices/:deviceSN/history",

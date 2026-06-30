@@ -43,3 +43,9 @@ export interface DeviceTrackResult {
   tracks: TrackPoint[];
   pagination: import("./api").Pagination;
 }
+
+export interface DeviceCommandResult {
+  topic: string;
+  published: boolean;
+  payload: Record<string, unknown>;
+}

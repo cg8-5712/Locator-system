@@ -1,18 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DeviceSummary } from "../../types/device";
 import type { AppMode } from "../../features/map-view/mode";
 import { formatDateTime, formatDurationSeconds } from "../../lib/time";
+import { createShare } from "../../services/http/shares";
+import type { ShareCreateResult } from "../../types/share";
 
 type ShareMode = "live_only" | "today_track";
 type ExpiryPreset = "30m" | "1h" | "24h" | "custom";
-
-interface GeneratedShare {
-  url: string;
-  password: string | null;
-  expiresAt: string;
-  remainingSeconds: number;
-  remainingVisits: string;
-}
 
 const text = {
   title: "\u521b\u5efa\u4f4d\u7f6e\u5206\u4eab\u94fe\u63a5",
@@ -47,11 +42,13 @@ const text = {
   demoDesc:
     "\u5f53\u524d\u4e3a\u6b7b\u6570\u636e\u9a8c\u8bc1\u6a21\u5f0f\uff0c\u751f\u6210\u7ed3\u679c\u53ef\u76f4\u63a5\u7528\u4e8e UI \u8054\u8c03\u548c\u6d41\u7a0b\u9a8c\u6536\u3002",
   liveDesc:
-    "\u5f53\u524d\u4e3a\u771f\u5b9e\u540e\u7aef\u6a21\u5f0f\uff0c\u4f46\u5206\u4eab\u63a5\u53e3\u5c1a\u672a\u843d\u5730\uff0c\u6b64\u5f39\u7a97\u7528\u4e8e\u5148\u9a8c\u8bc1\u524d\u7aef\u4ea4\u4e92\u4e0e\u5b57\u6bb5\u8bbe\u8ba1\u3002",
+    "\u5f53\u524d\u4e3a\u771f\u5b9e\u540e\u7aef\u6a21\u5f0f\uff0c\u751f\u6210\u540e\u4f1a\u521b\u5efa\u771f\u5b9e\u5206\u4eab\u8bb0\u5f55\u3002",
   copyLink: "\u4f4d\u7f6e\u5206\u4eab\u94fe\u63a5",
   copyPassword: "\u8bbf\u95ee\u5bc6\u7801",
   copyExpire: "\u6709\u6548\u671f\u81f3",
   copyVisits: "\u5269\u4f59\u8bbf\u95ee\u6b21\u6570",
+  creating: "\u751f\u6210\u4e2d...",
+  viewShares: "\u67e5\u770b\u5206\u4eab\u7ba1\u7406",
 };
 
 export function ShareLocationModal({
@@ -59,12 +56,15 @@ export function ShareLocationModal({
   mode,
   device,
   onClose,
+  onCreated,
 }: {
   open: boolean;
   mode: AppMode;
   device: DeviceSummary | null;
   onClose: () => void;
+  onCreated?: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [shareMode, setShareMode] = useState<ShareMode>("live_only");
   const [requirePassword, setRequirePassword] = useState(true);
   const [password, setPassword] = useState("");
@@ -72,7 +72,31 @@ export function ShareLocationModal({
   const [customExpiry, setCustomExpiry] = useState("");
   const [limitVisits, setLimitVisits] = useState(true);
   const [maxVisits, setMaxVisits] = useState(5);
-  const [generated, setGenerated] = useState<GeneratedShare | null>(null);
+  const [generated, setGenerated] = useState<ShareCreateResult | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const createShareMutation = useMutation({
+    mutationFn: async (payload: {
+      deviceSN: string;
+      shareMode: ShareMode;
+      password: string | null;
+      expiresAt: string;
+      maxVisits: number | null;
+    }) =>
+      createShare(payload.deviceSN, {
+        share_mode: payload.shareMode,
+        password: payload.password,
+        expires_at: payload.expiresAt,
+        max_visits: payload.maxVisits,
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["shares"] }),
+        queryClient.invalidateQueries({ queryKey: ["shares", "all"] }),
+      ]);
+      onCreated?.();
+    },
+  });
 
   useEffect(() => {
     if (!open) {
@@ -90,6 +114,7 @@ export function ShareLocationModal({
     setLimitVisits(true);
     setMaxVisits(5);
     setGenerated(null);
+    setSubmitError(null);
   }, [open, device?.device_sn]);
 
   const expirationPreview = useMemo(() => {
@@ -112,30 +137,35 @@ export function ShareLocationModal({
 
   const currentDevice = device;
 
-  function handleCreate() {
+  async function handleCreate() {
     const expirationDate = expirationPreview;
     if (!expirationDate || Number.isNaN(expirationDate.getTime())) {
       return;
     }
 
-    const shareCode = createRandomCode();
-    const previewUrl =
-      mode === "demo"
-        ? `${window.location.origin}/demo/share/${currentDevice.device_sn}?code=${shareCode}`
-        : `https://maps.locatorhub.com/s/${shareCode}`;
+    setSubmitError(null);
+    try {
+      const result =
+        mode === "demo"
+          ? createDemoGeneratedShare({
+              deviceSN: currentDevice.device_sn,
+              shareMode,
+              password: requirePassword ? password : null,
+              expiresAt: expirationDate.toISOString(),
+              maxVisits: limitVisits ? maxVisits : null,
+            })
+          : await createShareMutation.mutateAsync({
+              deviceSN: currentDevice.device_sn,
+              shareMode,
+              password: requirePassword ? password : null,
+              expiresAt: expirationDate.toISOString(),
+              maxVisits: limitVisits ? maxVisits : null,
+            });
 
-    const remainingSeconds = Math.max(
-      0,
-      Math.floor((expirationDate.getTime() - Date.now()) / 1000)
-    );
-
-    setGenerated({
-      url: previewUrl,
-      password: requirePassword ? password : null,
-      expiresAt: expirationDate.toISOString(),
-      remainingSeconds,
-      remainingVisits: limitVisits ? `${maxVisits}/${maxVisits}` : text.unlimited,
-    });
+      setGenerated(result);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "create share failed");
+    }
   }
 
   async function handleCopy() {
@@ -143,13 +173,22 @@ export function ShareLocationModal({
       return;
     }
 
+    const shareUrl =
+      mode === "demo"
+        ? `${window.location.origin}/demo/share/${currentDevice.device_sn}?code=${generated.share.share_code}`
+        : `${window.location.origin}/share/${generated.share.share_code}`;
+
     const content = [
-      `${text.copyLink}\uff1a${generated.url}`,
+      `${text.copyLink}\uff1a${shareUrl}`,
       generated.password
         ? `${text.copyPassword}\uff1a${generated.password}`
         : `${text.copyPassword}\uff1a${text.noPassword}`,
-      `${text.copyExpire}\uff1a${formatDateTime(generated.expiresAt)}`,
-      `${text.copyVisits}\uff1a${generated.remainingVisits}`,
+      `${text.copyExpire}\uff1a${formatDateTime(generated.share.expires_at)}`,
+      `${text.copyVisits}\uff1a${
+        generated.share.max_visits == null
+          ? text.unlimited
+          : `${generated.share.visit_count}/${generated.share.max_visits}`
+      }`,
     ].join("\n");
 
     if (navigator.clipboard?.writeText) {
@@ -279,10 +318,11 @@ export function ShareLocationModal({
             <div className="flex gap-3">
               <button
                 type="button"
-                onClick={handleCreate}
+                onClick={() => void handleCreate()}
+                disabled={createShareMutation.isPending}
                 className="rounded-2xl bg-[#10212b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#163445]"
               >
-                {text.generate}
+                {createShareMutation.isPending ? text.creating : text.generate}
               </button>
               <button
                 type="button"
@@ -292,6 +332,12 @@ export function ShareLocationModal({
                 {text.cancel}
               </button>
             </div>
+
+            {submitError ? (
+              <div className="rounded-[24px] border border-[#d94747]/20 bg-[#d94747]/8 p-4 text-sm text-[#9d2323]">
+                {submitError}
+              </div>
+            ) : null}
           </section>
 
           <section className="rounded-[28px] border border-[#1f88c9]/14 bg-[linear-gradient(180deg,rgba(31,136,201,0.08),rgba(255,255,255,0.7))] p-5">
@@ -301,17 +347,41 @@ export function ShareLocationModal({
                 <div className="rounded-[24px] border border-[#2f9e68]/16 bg-[#2f9e68]/8 p-4 text-sm text-[#20724c]">
                   {text.success}
                 </div>
-                <InfoRow label={text.link} value={generated.url} />
+                <InfoRow
+                  label={text.link}
+                  value={
+                    mode === "demo"
+                      ? `${window.location.origin}/demo/share/${currentDevice.device_sn}?code=${generated.share.share_code}`
+                      : `${window.location.origin}/share/${generated.share.share_code}`
+                  }
+                />
                 <InfoRow
                   label={text.passwordLabel}
                   value={generated.password ?? text.noPassword}
                 />
-                <InfoRow label={text.expiresAt} value={formatDateTime(generated.expiresAt)} />
+                <InfoRow
+                  label={text.expiresAt}
+                  value={formatDateTime(generated.share.expires_at)}
+                />
                 <InfoRow
                   label={text.remainingTime}
-                  value={formatDurationSeconds(generated.remainingSeconds)}
+                  value={formatDurationSeconds(
+                    Math.max(
+                      0,
+                      Math.floor(
+                        (new Date(generated.share.expires_at).getTime() - Date.now()) / 1000
+                      )
+                    )
+                  )}
                 />
-                <InfoRow label={text.remainingVisits} value={generated.remainingVisits} />
+                <InfoRow
+                  label={text.remainingVisits}
+                  value={
+                    generated.share.max_visits == null
+                      ? text.unlimited
+                      : `${generated.share.visit_count}/${generated.share.max_visits}`
+                  }
+                />
                 <button
                   type="button"
                   onClick={() => void handleCopy()}
@@ -378,4 +448,31 @@ function createRandomDigits() {
 
 function createRandomCode() {
   return Math.random().toString(36).slice(2, 9);
+}
+
+function createDemoGeneratedShare(input: {
+  deviceSN: string;
+  shareMode: ShareMode;
+  password: string | null;
+  expiresAt: string;
+  maxVisits: number | null;
+}): ShareCreateResult {
+  return {
+    share: {
+      id: Date.now(),
+      device_sn: input.deviceSN,
+      device_name: input.deviceSN,
+      share_code: createRandomCode(),
+      share_mode: input.shareMode,
+      requires_password: Boolean(input.password),
+      note: "",
+      expires_at: input.expiresAt,
+      max_visits: input.maxVisits,
+      visit_count: 0,
+      remaining_visits: input.maxVisits,
+      created_at: new Date().toISOString(),
+      status: "active",
+    },
+    password: input.password,
+  };
 }
